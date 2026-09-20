@@ -301,6 +301,41 @@
   .vhint { font-size: 11px; color: var(--steel); opacity: .85; margin: 0; }
   @media (max-width: 560px) { .vsplit { grid-template-columns: 1fr; } }
 
+  /* the classifier's pitch, deliberately styled like it knows what it is
+     talking about, because that is the trap */
+  .advice { margin: 14px 0 4px; padding: 12px 14px; border-radius: 5px;
+            border: 1px solid rgba(56,182,240,.35); background: rgba(56,182,240,.06); }
+  .advhead { display: flex; align-items: baseline; justify-content: space-between;
+             gap: 12px; flex-wrap: wrap; }
+  .advwho { font-family: "Saira", system-ui, sans-serif; font-size: 11px;
+            font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+            color: var(--cyan); }
+  .advsure { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px;
+             color: var(--steel); }
+  .advlist { margin: 8px 0 10px; padding-left: 18px; font-size: 12px;
+             line-height: 1.65; color: var(--ice); }
+  .advlist b { color: var(--cyan); text-transform: uppercase;
+               font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 11px; }
+  .advrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .advtake { border-color: rgba(56,182,240,.6) !important; color: var(--cyan) !important; }
+  .advtake:hover { background: rgba(56,182,240,.16) !important; }
+  .advwarn { font-size: 11px; color: var(--amber); opacity: .9; }
+  .advrule { font-size: 11.5px; color: var(--steel); line-height: 1.6;
+             margin: 10px 0 0; border-top: 1px solid rgba(70,88,111,.3); padding-top: 9px; }
+  .recdot { color: var(--cyan); margin-left: 7px; font-size: 9px; }
+  .lorow.rec .lotog { border-color: rgba(56,182,240,.45); }
+
+  /* mouse affordances: everything clickable says so before it is clicked */
+  .lotog:hover, .lowt:not([disabled]):hover, .roev:hover {
+    border-color: rgba(207,224,240,.6); color: var(--chrome);
+    background: rgba(207,224,240,.07);
+  }
+  .lotog:active, .lowt:active, .roev:active { transform: translateY(1px); }
+  .lotog, .lowt, .roev, .gun, .go { transition: background .12s ease, border-color .12s ease,
+                                    color .12s ease, transform .06s ease; }
+  .go:hover { filter: brightness(1.12); }
+  #aar { cursor: default; }
+
   .loadout { margin-top: 18px; border-top: 1px solid rgba(70,88,111,.4); padding-top: 16px; }
   .lohead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
   .lohead h2 { margin: 0; }
@@ -582,6 +617,7 @@
     <a-entity id="sky" geometry="primitive: sphere; radius: 400; segmentsWidth: 40; segmentsHeight: 24"
               sky-dome></a-entity>
     <a-entity id="floor" rotation="-90 0 0" range-floor></a-entity>
+    <a-entity id="loPanel" lo-panel></a-entity>
 
     <a-entity id="rig" position="0 0 0">
       <a-entity id="cam" camera look-controls="pointerLockEnabled: true" position="0 1.6 0" desktop-gun>
@@ -1162,27 +1198,50 @@
     return t;
   }
 
+  /* Open water under the range. Built from layered sine swell rather than
+     noise so the crests line up into something that reads as a sea surface
+     at a glance, with a little glint on the windward faces. It tiles, so the
+     period has to divide the canvas exactly or the seams show. */
   function floorTexture() {
     var cv = document.createElement('canvas');
-    cv.width = 256; cv.height = 256;
+    cv.width = cv.height = 512;
     var x = cv.getContext('2d');
-    x.fillStyle = '#060F19';
-    x.fillRect(0, 0, 256, 256);
-    x.strokeStyle = 'rgba(56,182,240,0.20)';
-    x.lineWidth = 1.5;
-    x.strokeRect(0.75, 0.75, 254.5, 254.5);
-    x.strokeStyle = 'rgba(56,182,240,0.075)';
-    x.lineWidth = 1;
-    for (var i = 1; i < 4; i++) {
-      var p = i * 64;
-      x.beginPath(); x.moveTo(p, 0); x.lineTo(p, 256); x.stroke();
-      x.beginPath(); x.moveTo(0, p); x.lineTo(256, p); x.stroke();
+    var img = x.createImageData(512, 512);
+    var d = img.data;
+
+    var TAU = Math.PI * 2;
+    for (var py = 0; py < 512; py++) {
+      for (var px = 0; px < 512; px++) {
+        var u = px / 512, v = py / 512;
+        // three swells at whole-number frequencies so every edge matches
+        var h = Math.sin(TAU * (u * 3 + v * 1)) * 0.5
+              + Math.sin(TAU * (u * 5 - v * 4)) * 0.3
+              + Math.sin(TAU * (u * 11 + v * 9)) * 0.14
+              + Math.sin(TAU * (u * 2 - v * 7)) * 0.22;
+        h = h / 1.16;                                  // roughly -1..1
+
+        // deep trough to lit crest
+        var t = Math.max(0, Math.min(1, h * 0.5 + 0.5));
+        var r = 4  + t * 16;
+        var g = 22 + t * 58;
+        var bl = 38 + t * 86;
+
+        // glint only on the steepest crests, and sparse
+        if (h > 0.72) {
+          var k = (h - 0.72) / 0.28;
+          r += k * 70; g += k * 95; bl += k * 90;
+        }
+        var i4 = (py * 512 + px) * 4;
+        d[i4] = r; d[i4 + 1] = g; d[i4 + 2] = bl; d[i4 + 3] = 255;
+      }
     }
-    var t = new THREE.CanvasTexture(cv);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(60, 60);
-    if ('colorSpace' in t) { t.colorSpace = THREE.SRGBColorSpace; }
-    return t;
+    x.putImageData(img, 0, 0);
+
+    var t2 = new THREE.CanvasTexture(cv);
+    t2.wrapS = t2.wrapT = THREE.RepeatWrapping;
+    t2.repeat.set(26, 26);
+    if ('colorSpace' in t2) { t2.colorSpace = THREE.SRGBColorSpace; }
+    return t2;
   }
 
   /* Blood on the visor. Splatter, then runs. Each call makes a different
@@ -1291,10 +1350,14 @@
 
   AFRAME.registerComponent('range-floor', {
     init: function () {
-      this.el.setObject3D('mesh', new THREE.Mesh(
+      var water = new THREE.Mesh(
         new THREE.PlaneGeometry(400, 400),
-        new THREE.MeshStandardMaterial({ map: floorTexture(), roughness: 0.95, metalness: 0.0 })
-      ));
+        new THREE.MeshStandardMaterial({
+          map: floorTexture(), roughness: 0.34, metalness: 0.28
+        })
+      );
+      this.el.setObject3D('mesh', water);
+      this.water = water;
       var ring = new THREE.Group();
       // 12 m is the shotgun's reach, so it gets the bright marking
       [[6, 0x2A4A66, 0.20], [12, AMBER, 0.50], [20, 0x2A4A66, 0.22], [30, 0x2A4A66, 0.15]]
@@ -1309,6 +1372,16 @@
           ring.add(m);
         });
       this.el.setObject3D('rings', ring);
+    },
+
+    /* The texture crawls slowly across the plane: enough for the surface to
+       live, slow enough that it never pulls the eye off the sky. */
+    tick: function (time, dt) {
+      if (!this.water || !dt) { return; }
+      var m = this.water.material.map;
+      if (!m) { return; }
+      m.offset.x = (m.offset.x + dt * 0.0000135) % 1;
+      m.offset.y = (m.offset.y + dt * 0.0000260) % 1;
     }
   });
 
@@ -1514,6 +1587,185 @@
   });
 
   /* The debrief, drawn large for the headset. */
+  /* ==================================================== the loadout, in VR
+     The old one was a child of the camera, which meant it moved with your
+     head: impossible to point a controller at, and small enough that
+     twenty-nine rows were unreadable. This one stands still in front of you
+     and is worked with the laser — point, pull, done. Gaze works too, so it
+     is still usable if a controller is not tracking. */
+  var LO = {
+    W: 1600, H: 1000,                    // canvas
+    PW: 2.9, PH: 1.81,                   // metres
+    TOP: 226, ROW: 46, COLW: 740, PADX: 46,
+    GO_Y: 902, GO_H: 74,
+    perCol: function (n) { return Math.ceil(n / 2); },
+
+    /* Canvas position of a row, and the inverse — one layout, so what you
+       point at is what lights up. */
+    xy: function (i, n) {
+      var pc = this.perCol(n - 1);        // the go bar is not one of the grid rows
+      var col = i < pc ? 0 : 1;
+      return { x: this.PADX + col * this.COLW, y: this.TOP + (i - col * pc) * this.ROW };
+    },
+
+    hit: function (u, v, n) {
+      var cx = u * this.W, cy = (1 - v) * this.H;
+      if (cy >= this.GO_Y - this.GO_H / 2) { return n - 1; }      // the go bar
+      if (cy < this.TOP - this.ROW / 2) { return -1; }
+      var pc = this.perCol(n - 1);
+      var col = cx < this.PADX + this.COLW - 20 ? 0 : 1;
+      var row = Math.round((cy - this.TOP) / this.ROW);
+      if (row < 0 || row >= pc) { return -1; }
+      var i = col * pc + row;
+      return (i >= 0 && i < n - 1) ? i : -1;
+    }
+  };
+
+  AFRAME.registerComponent('lo-panel', {
+    init: function () {
+      this.cv = document.createElement('canvas');
+      this.cv.width = LO.W; this.cv.height = LO.H;
+      this.ctx = this.cv.getContext('2d');
+      this.tex = new THREE.CanvasTexture(this.cv);
+      if ('colorSpace' in this.tex) { this.tex.colorSpace = THREE.SRGBColorSpace; }
+      var mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(LO.PW, LO.PH),
+        new THREE.MeshBasicMaterial({
+          map: this.tex, transparent: true, depthTest: false, fog: false
+        })
+      );
+      mesh.renderOrder = 1005;
+      this.el.setObject3D('mesh', mesh);
+      this.el.object3D.visible = false;
+    },
+
+    render: function (rows, sel, wave, summary, cursor) {
+      var x = this.ctx, i;
+      x.clearRect(0, 0, LO.W, LO.H);
+      x.fillStyle = 'rgba(4,9,15,0.96)';
+      x.fillRect(0, 0, LO.W, LO.H);
+      x.strokeStyle = 'rgba(56,182,240,0.45)';
+      x.lineWidth = 4; x.strokeRect(3, 3, LO.W - 6, LO.H - 6);
+
+      x.textAlign = 'left'; x.textBaseline = 'middle';
+      x.font = '700 36px "Saira", system-ui, sans-serif';
+      x.fillStyle = '#EAF3FB';
+      x.fillText('SET UP FOR WAVE ' + wave, LO.PADX, 52);
+
+      var used = LOADOUT.spent(), ch = LOADOUT.channels();
+      x.textAlign = 'right';
+      x.font = '700 36px "IBM Plex Mono", ui-monospace, monospace';
+      x.fillStyle = used >= ch ? '#FFB020' : '#38B6F0';
+      x.fillText(used + ' / ' + ch + ' CHANNELS', LO.W - LO.PADX, 52);
+
+      // what just happened, in one line, so the debrief is not a second screen
+      x.textAlign = 'left';
+      x.font = '600 24px "IBM Plex Mono", ui-monospace, monospace';
+      x.fillStyle = 'rgba(150,172,196,0.95)';
+      x.fillText(summary || '', LO.PADX, 104);
+
+      // the classifier's pick, named so it can be judged
+      var adv = this.adv || null;
+      if (adv && adv.picks.length) {
+        var names = adv.picks.map(function (pk) {
+          for (var f = 0; f < FIELDS.length; f++) {
+            if (FIELDS[f].key === pk.key) { return FIELDS[f].name.toUpperCase(); }
+          }
+          return pk.key.toUpperCase();
+        }).join(' \u00b7 ');
+        x.font = '600 23px "IBM Plex Mono", ui-monospace, monospace';
+        x.fillStyle = '#38B6F0';
+        x.fillText('\u25c6 CLASSIFIER SUGGESTS: ' + names + '   (' + adv.stated +
+                   '% sure \u00b7 trained ' + adv.trained + '%)', LO.PADX, 146);
+      }
+
+      x.strokeStyle = 'rgba(70,88,111,0.5)'; x.lineWidth = 2;
+      x.beginPath(); x.moveTo(LO.PADX, 182); x.lineTo(LO.W - LO.PADX, 182); x.stroke();
+
+      var n = rows.length;
+      for (i = 0; i < n - 1; i++) {
+        var r = rows[i], pos = LO.xy(i, n);
+        var on, tail = '', rec = false;
+        if (r.kind === 'advice') {
+          if (i === sel) {
+            x.fillStyle = 'rgba(255,176,32,0.20)';
+            x.fillRect(pos.x - 14, pos.y - 21, LO.COLW - 34, 42);
+            x.fillStyle = '#FFB020';
+            x.fillRect(pos.x - 14, pos.y - 21, 6, 42);
+          }
+          x.textAlign = 'left';
+          x.font = '700 27px "IBM Plex Mono", ui-monospace, monospace';
+          x.fillStyle = '#38B6F0';
+          x.fillText('\u25c6 ' + r.label.toUpperCase(), pos.x, pos.y);
+          continue;
+        }
+        if (r.kind === 'feed') {
+          on = !!VIEW.on[r.key];
+          if (on) {
+            var wk = LOADOUT.weight[r.key] || 'normal';
+            for (var w = 0; w < WEIGHTS.length; w++) {
+              if (WEIGHTS[w].key === wk) { tail = WEIGHTS[w].label; }
+            }
+          }
+          if (adv) {
+            for (var a = 0; a < adv.picks.length; a++) {
+              if (adv.picks[a].key === r.key) { rec = true; }
+            }
+          }
+        } else {
+          on = LOADOUT.roeSays(r.axis, r.val);
+          tail = on ? 'HOSTILE' : '';
+        }
+
+        if (i === sel) {
+          x.fillStyle = 'rgba(255,176,32,0.20)';
+          x.fillRect(pos.x - 14, pos.y - 21, LO.COLW - 34, 42);
+          x.fillStyle = '#FFB020';
+          x.fillRect(pos.x - 14, pos.y - 21, 6, 42);
+        }
+
+        x.textAlign = 'left';
+        x.font = '600 27px "IBM Plex Mono", ui-monospace, monospace';
+        x.fillStyle = on ? (r.kind === 'roe' ? '#FF4D3D' : '#38B6F0')
+                         : 'rgba(140,164,190,0.75)';
+        x.fillText((on ? '\u25a0 ' : '\u25a1 ') + r.label.toUpperCase() +
+                   (rec && !on ? '  \u25c6' : ''), pos.x, pos.y);
+
+        if (tail) {
+          x.textAlign = 'right';
+          x.font = '700 21px "IBM Plex Mono", ui-monospace, monospace';
+          x.fillStyle = tail === 'DECISIVE' ? '#FFB020'
+                      : tail === 'HOSTILE' ? '#FF4D3D' : 'rgba(160,182,206,0.9)';
+          x.fillText(tail, pos.x + LO.COLW - 52, pos.y);
+        }
+      }
+
+      // the way out, impossible to miss
+      var goSel = sel === n - 1;
+      x.fillStyle = goSel ? '#38B6F0' : 'rgba(56,182,240,0.18)';
+      x.fillRect(LO.PADX, LO.GO_Y - LO.GO_H / 2, LO.W - LO.PADX * 2, LO.GO_H);
+      x.strokeStyle = '#38B6F0'; x.lineWidth = 3;
+      x.strokeRect(LO.PADX, LO.GO_Y - LO.GO_H / 2, LO.W - LO.PADX * 2, LO.GO_H);
+      x.textAlign = 'center';
+      x.font = '800 38px "Saira", system-ui, sans-serif';
+      x.fillStyle = goSel ? '#04090F' : '#EAF3FB';
+      x.fillText('\u25b6  FLY WAVE ' + wave, LO.W / 2, LO.GO_Y);
+
+      x.font = '600 23px "IBM Plex Mono", ui-monospace, monospace';
+      x.fillStyle = 'rgba(150,172,196,0.9)';
+      x.fillText('POINT WITH EITHER HAND \u00b7 TRIGGER SELECTS \u00b7 GRIP CHANGES IMPORTANCE',
+                 LO.W / 2, LO.GO_Y - LO.GO_H / 2 - 28);
+
+      if (cursor) {
+        x.beginPath();
+        x.arc(cursor.x, cursor.y, 11, 0, Math.PI * 2);
+        x.fillStyle = 'rgba(255,176,32,0.9)'; x.fill();
+        x.strokeStyle = 'rgba(4,9,15,0.9)'; x.lineWidth = 3; x.stroke();
+      }
+      this.tex.needsUpdate = true;
+    }
+  });
+
   AFRAME.registerComponent('aar-panel', {
     init: function () {
       this.cv = document.createElement('canvas');
@@ -1850,6 +2102,7 @@
     battery: null,
     warm: [],                      // early samples used to find resting rate
     t0: 0, lastPacket: 0, beatPhase: 0, contact: true,
+    SIM_MAX: 126,          // ceiling for the simulated strap
 
     maxHR: function () { return 220 - this.age; },
 
@@ -1988,8 +2241,9 @@
         self.load = Math.max(0, self.load - 0.020);
 
         var intensity = Math.min(1, self.load + wavePush);
-        var span = self.maxHR() - self.rest;
-        var target = self.rest + intensity * span * 0.82;
+        // flat out in this simulation means 126, not a textbook maximum
+        var span = self.SIM_MAX - self.rest;
+        var target = self.rest + intensity * span;
 
         var gap = target - self.simBpm;
         var rate;
@@ -2002,7 +2256,7 @@
         var step = Math.max(-Math.abs(rate), Math.min(Math.abs(rate), gap));
         if (gap < 0) { step = Math.max(rate, gap); }
         self.simBpm += step;
-        self.simBpm = Math.max(self.rest - 2, Math.min(self.maxHR(), self.simBpm));
+        self.simBpm = Math.max(self.rest - 2, Math.min(self.SIM_MAX, self.simBpm));
 
         breath += 0.62;
         // HRV collapses under load: 3 bpm of swing at rest, almost none flat out
@@ -2081,8 +2335,17 @@
     /* With a strap on, the mix follows your pulse. Without one it follows the
        situation instead — wave number and how much is in the air — so the
        music still swells for anyone who has no heart monitor. */
+    FULL_AT: 105,          // bpm at which the mix is already all the way up
+
     tension: function () {
-      if (HR.live()) { return HR.stress(); }
+      if (HR.live()) {
+        /* Against a modelled maximum the music never actually reached full,
+           because nobody hits 185 playing a game. Tie it to a rate a person
+           genuinely gets to instead. */
+        var rest = HR.rest === null ? 55 : HR.rest;
+        var top = Math.max(rest + 12, this.FULL_AT);
+        return Math.max(0, Math.min(1, (HR.bpm - rest) / (top - rest)));
+      }
       var g = window.DroneRange && window.DroneRange.game && window.DroneRange.game();
       if (!g || !g.running) { return 0.12; }
       return Math.min(1, (g.wave - 1) * 0.15 + g.live.length * 0.075);
@@ -2495,6 +2758,94 @@
         }
       }
       return n;
+    }
+  };
+
+  /* ============================================ what the classifier advises
+     It reads the wave it is about to face and what went wrong in the last
+     one, and says which feeds it thinks matter. It is worth listening to —
+     and it is the same classifier that sounds equally certain when it is
+     guessing, so its advice is exactly as trustworthy as it has earned.
+     Taking it wholesale is the mistake the whole game is about. */
+  var ADVISOR = {
+    /* Reasons are specific because a recommendation you cannot interrogate
+       is just an order. */
+    suggest: function (game) {
+      var out = [], seen = {};
+      var add = function (key, why, weight) {
+        if (seen[key] || VIEW.on[key]) { return; }
+        seen[key] = true;
+        out.push({ key: key, why: why, weight: weight || 'normal' });
+      };
+
+      var q = game.queue || [];
+      var counts = { missile: 0, jet: 0, airliner: 0, bird: 0, drone: 0 };
+      for (var i = 0; i < q.length; i++) {
+        counts[q[i].name] = (counts[q[i].name] || 0) + q[i].n;
+      }
+      var civilians = counts.airliner + counts.bird;
+      var lastWave = game.wave - 1;
+      var lost = 0, spoofed = 0, blindCalls = 0;
+      for (i = 0; i < game.log.length; i++) {
+        var r = game.log[i];
+        if (r.wave !== lastWave) { continue; }
+        if (r.action === 'engaged' && !r.hostile) { lost++; }
+        if (r.spoofed) { spoofed++; }
+        if (r.ai === null) { blindCalls++; }
+      }
+
+      if (lost > 0) {
+        add('xpdr', 'you lost ' + lost + ' civilian' + (lost > 1 ? 's' : '') +
+            ' last wave; the transponder separates them fastest', 'high');
+        add('profile', 'optical would have shown you the airframe in time', 'high');
+      }
+      if (spoofed > 0) {
+        add('band', spoofed + ' contact' + (spoofed > 1 ? 's were' : ' was') +
+            ' spoofing a sensor; track status is where the disagreement shows');
+        add('emissn', 'a second independent source is how you catch a liar');
+      }
+      if (counts.missile >= 3) {
+        add('range', counts.missile + ' missiles this wave and they close fast');
+        add('arrow', 'the arrow finds the nearest one before it finds you');
+      }
+      if (civilians >= 3) {
+        add('xpdr', civilians + ' civilian contacts are coming; the transponder is the cheap discriminator', 'high');
+      }
+      if (blindCalls > 1) {
+        add('ring', 'you were calling contacts with nothing tracked at all');
+      }
+      add('pct', 'the confidence figure tells you when you have enough to act');
+      add('ai', 'my read, for whatever you judge it to be worth');
+      add('speed', 'closing rate is the cheapest early discriminator');
+
+      /* Its confidence in its own advice climbs with training — faster than
+         the advice actually improves. That gap is the point. */
+      var sure = Math.min(96, 58 + Math.round(AI_TRAIN.level * 38));
+      return { picks: out.slice(0, Math.max(1, LOADOUT.channels())), stated: sure,
+               trained: Math.round(AI_TRAIN.level * 100) };
+    },
+
+    /* Its rule advice is narrower than it sounds, and it says so. */
+    ruleHint: function (game) {
+      var lastWave = game.wave - 1, wrongKill = 0, wrongPass = 0;
+      for (var i = 0; i < game.log.length; i++) {
+        var r = game.log[i];
+        if (r.wave !== lastWave || !r.roe) { continue; }
+        if (r.roe === 'MEETS RULES' && !r.hostile) { wrongKill++; }
+        if (r.roe === 'CLEAR OF RULES' && r.hostile) { wrongPass++; }
+      }
+      if (wrongKill) {
+        return 'Your rules flagged ' + wrongKill + ' civilian' + (wrongKill > 1 ? 's' : '') +
+               '. Transponder NONE on its own catches birds — pair it with a profile.';
+      }
+      if (wrongPass) {
+        return 'Your rules cleared something hostile. Consider adding an emission ' +
+               'or widening the profile list.';
+      }
+      if (!LOADOUT.ruleCount()) {
+        return 'You have not written any rules. Start with what you would defend in writing.';
+      }
+      return 'Your rules held last wave. They have not met a spoofed contact yet.';
     }
   };
 
@@ -3708,6 +4059,9 @@
       }
     },
     fire: function () {
+      var lg = this.el.sceneEl.components.game;
+      if (lg && lg.loOn) { return; }        // the trigger belongs to the panel
+
       var now = performance.now();
       var cool = (this.weapon === 'rocket' ? 420
                  : this.weapon === 'pistol' ? PISTOL_COOL : 620) * stressCoolMul();
@@ -3730,7 +4084,7 @@
   });
 
   /* --------------------------------------------------------------- game */
-  var ROCKETS_PER_WAVE = 6;
+  var ROCKET_SPARES = 3;      // issued on top of one per missile in the wave
   var SHOTGUN_RANGE = 12;
   var SHOTGUN_DEG = 9;
   var BLAST_RADIUS = 5;
@@ -3767,7 +4121,6 @@
       this.civilian = 0;
       this.kills = 0;
       this.wave = 1;
-      this.rockets = ROCKETS_PER_WAVE;
       this.sinceSpawn = 0;
       this.elapsed = 0;
       this.waveTime = 0;
@@ -4421,17 +4774,31 @@
       HR.bump(0.09);
       this.waveTime = 0;
       this.wave++;
-      this.rockets = ROCKETS_PER_WAVE;
       this.armWave();
       sfx.wave();
       this.debrief();
     },
 
+    /* The wave is rolled before it is flown. That is the only way the
+       launcher can be loaded honestly: one rocket for every missile the wave
+       actually contains, plus three in hand. Swarms are drones, so they do
+       not draw on it. */
     armWave: function () {
       this.swarmsLeft = this.swarmCount();
-      this.trickleLeft = this.trickleCount();
       this.nextSwarmAt = 5;
       this.sinceSpawn = 0;
+
+      this.queue = [];
+      var missiles = 0, n = this.trickleCount();
+      for (var i = 0; i < n; i++) {
+        var name = pickType(this.wave);
+        var salvo = name === 'missile' ? salvoSize(this.wave) : 1;
+        if (name === 'missile') { missiles += salvo; }
+        this.queue.push({ name: name, n: salvo });
+      }
+      this.trickleLeft = this.queue.length;
+      this.waveMissiles = missiles;
+      this.rockets = missiles + ROCKET_SPARES;
     },
 
     /* Four outcomes that matter, and they are not 'did you hit it'.
@@ -4461,6 +4828,7 @@
 
     debrief: function () {
       LOADOUT.init();          // before anything reads or reports the rules
+      this.freeMouse();
       var wave = this.wave - 1;
       var rows = this.log.filter(function (r) { return r.wave === wave; });
       if (!rows.length) {
@@ -4480,6 +4848,8 @@
           if (h) { h.addEventListener('triggerdown', me._aarVR = function () { me.loAct(false); }); }
         });
         this.bindLoadoutControls();
+        this.loSummary = 'Wave ' + wave + ': nothing resolved';
+        this.placeLoPanel();
         this.drawLoadoutPanel();
         return;
       }
@@ -4545,16 +4915,17 @@
       this.hands.forEach(function (h) {
         if (h) { h.addEventListener('triggerdown', self._aarVR = function () { self.loAct(false); }); }
       });
-      this.drawAarPanel(wave, rows, t);
       this.bindLoadoutControls();
-      // in the headset the panel flips to the setup after a beat, since the
-      // controllers are already bound to it
-      if (this.el.is && this.el.is('vr-mode')) {
-        var me2 = this;
-        clearTimeout(this._loFlip);
-        this._loFlip = setTimeout(function () {
-          if (me2.loOn) { me2.drawLoadoutPanel(); }
-        }, 4200);
+      if (inVR) {
+        // one screen, up immediately: the debrief condenses into its header
+        if (this.aarPanel) { this.aarPanel.object3D.visible = false; }
+        this.loSummary = 'Wave ' + wave + ': ' + t.civilians + ' civilian' +
+          (t.civilians === 1 ? '' : 's') + ' lost, ' + t.leaked + ' let through, ' +
+          (t.trustedWrong + t.overrodeWrong) + ' bad calls';
+        this.placeLoPanel();
+        this.drawLoadoutPanel();
+      } else {
+        this.drawAarPanel(wave, rows, t);
       }
     },
 
@@ -4594,8 +4965,26 @@
         '<div class="lohead"><h2>Set up for wave ' + this.wave + '</h2>' +
         '<span class="chan' + (used > ch ? ' over' : '') + '" id="loChan">' +
         used + ' / ' + ch + ' channels</span></div>' +
-        '<p class="aarlede">You cannot run everything. What you leave off is the decision.</p>' +
-        '<div class="locols">';
+        '<p class="aarlede">You cannot run everything. What you leave off is the decision.</p>';
+
+      var adv = ADVISOR.suggest(this);
+      h += '<div class="advice"><div class="advhead">' +
+           '<span class="advwho">Classifier recommends</span>' +
+           '<span class="advsure">' + adv.stated + '% confident \u00b7 trained ' +
+           adv.trained + '%</span></div><ul class="advlist">';
+      for (var a = 0; a < adv.picks.length; a++) {
+        var pk = adv.picks[a], nm = pk.key;
+        for (var fi = 0; fi < FIELDS.length; fi++) {
+          if (FIELDS[fi].key === pk.key) { nm = FIELDS[fi].name; }
+        }
+        h += '<li><b>' + nm + '</b> &mdash; ' + pk.why + '</li>';
+      }
+      h += '</ul><div class="advrow">' +
+           '<button class="gun advtake" id="advTake">Take the recommendation</button>' +
+           '<span class="advwarn">It sounds this certain whether or not it can see anything.</span>' +
+           '</div><p class="advrule">' + ADVISOR.ruleHint(this) + '</p></div>';
+
+      h += '<div class="locols">';
 
       h += '<div class="locol"><h3>Feeds &amp; importance</h3><div class="lolist">';
       for (var i = 0; i < FIELDS.length; i++) {
@@ -4606,9 +4995,15 @@
         var wl = 'NORMAL';
         for (var w = 0; w < WEIGHTS.length; w++) { if (WEIGHTS[w].key === wk) { wl = WEIGHTS[w].label; } }
         var isCue = ['speed', 'size', 'profile', 'emissn', 'xpdr'].indexOf(f.key) !== -1;
-        h += '<div class="lorow' + (on ? ' on' : '') + '">' +
-             '<button class="lotog" data-feed="' + f.key + '">' +
+        var rec = false;
+        for (var ai2 = 0; ai2 < adv.picks.length; ai2++) {
+          if (adv.picks[ai2].key === f.key) { rec = true; }
+        }
+        h += '<div class="lorow' + (on ? ' on' : '') + (rec ? ' rec' : '') + '">' +
+             '<button class="lotog" data-feed="' + f.key + '" title="' +
+               (rec ? 'the classifier recommends this' : 'toggle this feed') + '">' +
                '<span class="box">' + (on ? '\u25a0' : '\u25a1') + '</span>' + f.name +
+               (rec ? '<span class="recdot" title="recommended">\u25c6</span>' : '') +
              '</button>' +
              (isCue
                ? '<button class="lowt ' + wk + '" data-weight="' + f.key + '"' +
@@ -4697,6 +5092,20 @@
           repaint();
         });
       });
+      var take = document.getElementById('advTake');
+      if (take) {
+        take.addEventListener('click', function () {
+          var adv = ADVISOR.suggest(self);
+          for (var i = 0; i < adv.picks.length; i++) {
+            if (!LOADOUT.canAdd()) { break; }
+            VIEW.set(adv.picks[i].key, true);
+            LOADOUT.weight[adv.picks[i].key] = adv.picks[i].weight;
+          }
+          self.tookAdvice = true;
+          repaint();
+        });
+      }
+
       var go = document.getElementById('loGo');
       if (go) { go.addEventListener('click', function () { self.resume(); }); }
     },
@@ -4757,7 +5166,7 @@
        row, grip flies the wave. Same LOADOUT underneath as the desktop panel,
        so whichever surface you set it on, it is one setup. */
     loRows: function () {
-      var rows = [], i;
+      var rows = [{ kind: 'advice', label: 'take the classifier\u2019s picks' }], i;
       for (i = 0; i < FIELDS.length; i++) {
         if (LOADOUT.COSTED.indexOf(FIELDS[i].key) === -1) { continue; }
         rows.push({ kind: 'feed', key: FIELDS[i].key, label: FIELDS[i].name });
@@ -4792,6 +5201,16 @@
       var r = this.loRows()[this.loSel];
       if (!r) { return; }
       if (r.kind === 'go') { this.loOn = false; this.resume(); return; }
+      if (r.kind === 'advice') {
+        var adv = ADVISOR.suggest(this);
+        for (var a = 0; a < adv.picks.length; a++) {
+          if (!LOADOUT.canAdd()) { break; }
+          VIEW.set(adv.picks[a].key, true);
+          LOADOUT.weight[adv.picks[a].key] = adv.picks[a].weight;
+        }
+        this.drawLoadoutPanel();
+        return;
+      }
       if (r.kind === 'feed') {
         if (alt && VIEW.on[r.key]) { LOADOUT.cycleWeight(r.key); }
         else if (!VIEW.on[r.key] && !LOADOUT.canAdd()) { this.flashChannels(); }
@@ -4802,12 +5221,73 @@
       this.drawLoadoutPanel();
     },
 
+    /* Stand the panel in front of wherever the player is actually facing,
+       once, and leave it there. A panel that follows your head cannot be
+       pointed at. */
+    placeLoPanel: function () {
+      var el = document.getElementById('loPanel');
+      var cam = this.el.camera;
+      if (!el || !cam) { return null; }
+      var p = new THREE.Vector3(), q = new THREE.Quaternion();
+      cam.getWorldPosition(p);
+      cam.getWorldQuaternion(q);
+      var f = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+      f.y = 0;
+      if (f.lengthSq() < 1e-4) { f.set(0, 0, -1); }
+      f.normalize();
+      var at = new THREE.Vector3(p.x + f.x * 2.1, p.y - 0.12, p.z + f.z * 2.1);
+      el.object3D.position.copy(at);
+      el.object3D.lookAt(p.x, p.y - 0.12, p.z);
+      el.object3D.visible = true;
+      return el;
+    },
+
     drawLoadoutPanel: function () {
-      if (!this.aarPanel) { return; }
-      var c = this.aarPanel.components['aar-panel'];
-      if (!c || !c.renderLoadout) { return; }
-      c.renderLoadout(this.loRows(), this.loSel, this.wave);
-      this.aarPanel.object3D.visible = true;
+      var el = document.getElementById('loPanel');
+      if (!el) { return; }
+      var c = el.components['lo-panel'];
+      if (!c) { return; }
+      c.adv = ADVISOR.suggest(this);
+      c.render(this.loRows(), this.loSel, this.wave, this.loSummary || '', this.loCursor);
+      el.object3D.visible = true;
+    },
+
+    /* Point at it. Each controller casts its forward ray at the panel; the
+       gaze does too, so this still works if a controller drops out. */
+    stepLoadoutRay: function () {
+      if (!this.loOn) { return; }
+      var el = document.getElementById('loPanel');
+      if (!el || !el.object3D.visible) { return; }
+      var mesh = el.getObject3D('mesh');
+      if (!mesh) { return; }
+
+      if (!this._ray) { this._ray = new THREE.Raycaster(); }
+      var rows = this.loRows(), n = rows.length;
+      var o = new THREE.Vector3(), q = new THREE.Quaternion(), d = new THREE.Vector3();
+      var sources = [], i;
+      for (i = 0; i < this.hands.length; i++) {
+        var h = this.hands[i];
+        if (h && h.object3D && h.object3D.visible) { sources.push(h.object3D); }
+      }
+      if (this.el.camera) { sources.push(this.el.camera); }   // gaze, last resort
+
+      for (i = 0; i < sources.length; i++) {
+        sources[i].getWorldPosition(o);
+        sources[i].getWorldQuaternion(q);
+        d.set(0, 0, -1).applyQuaternion(q).normalize();
+        this._ray.set(o, d);
+        var hits = this._ray.intersectObject(mesh, false);
+        if (!hits.length || !hits[0].uv) { continue; }
+        var uv = hits[0].uv;
+        var row = LO.hit(uv.x, uv.y, n);
+        var cur = { x: uv.x * LO.W, y: (1 - uv.y) * LO.H };
+        var moved = row >= 0 && row !== this.loSel;
+        this.loCursor = cur;
+        if (row >= 0) { this.loSel = row; }
+        if (moved || !this._loDrawn) { this._loDrawn = true; }
+        this.drawLoadoutPanel();
+        return;
+      }
     },
 
     verdictLine: function (t) {
@@ -4832,6 +5312,25 @@
       return 'Clean wave. Nothing to correct.';
     },
 
+    /* Hand the cursor back for the menus and take it again for the round,
+       but only if the player had it in the first place. */
+    freeMouse: function () {
+      this.hadLock = !!document.pointerLockElement;
+      if (document.pointerLockElement && document.exitPointerLock) {
+        try { document.exitPointerLock(); } catch (e) {}
+      }
+    },
+
+    grabMouse: function () {
+      if (!this.hadLock) { return; }
+      var sc = this.el;
+      if (sc.is && sc.is('vr-mode')) { return; }
+      var cv = sc.canvas;
+      if (cv && cv.requestPointerLock) {
+        try { cv.requestPointerLock(); } catch (e) {}
+      }
+    },
+
     resume: function () {
       var host = document.getElementById('aar');
       host.classList.remove('show');
@@ -4843,15 +5342,21 @@
         this._aarVR = null;
       }
       if (this.aarPanel) { this.aarPanel.object3D.visible = false; }
+      var lp = document.getElementById('loPanel');
+      if (lp) { lp.object3D.visible = false; }
       this.loOn = false;
+      this.loCursor = null;
+      this._loDrawn = false;
       LOADOUT.init();
       VIEW.commit();
       this.paintChips();
       // the breath sits in the gap, before the next wave is let loose
       this.offerBreath(function () {
+        self.grabMouse();
         self.paused = false;
         self.running = true;
-        self.say('Wave ' + self.wave + ' — rockets restocked');
+        self.say('Wave ' + self.wave + ' \u2014 ' + self.rockets + ' rockets for ' +
+                 self.waveMissiles + ' missile' + (self.waveMissiles === 1 ? '' : 's'));
       });
     },
 
@@ -4935,17 +5440,22 @@
     speedScale: function () { return 1 + Math.min(1.4, (this.wave - 1) * 0.16); },
 
     spawn: function () {
-      if (this.trickleLeft <= 0) { return; }
+      if (!this.queue || !this.queue.length) { return; }
       var cap = this.liveCap();
       if (this.live.length >= cap) { return; }
-      this.trickleLeft--;
-      var name = pickType(this.wave);
-      var n = name === 'missile' ? salvoSize(this.wave) : 1;
-      for (var i = 0; i < n && this.live.length < cap; i++) {
+
+      var item = this.queue.shift();
+      var sent = 0;
+      for (var i = 0; i < item.n && this.live.length < cap; i++) {
         // fan the salvo slightly in bearing and stagger it in depth
-        this.spawnOne(name, Math.random() * Math.PI * 2, i * 2.4);
+        this.spawnOne(item.name, Math.random() * Math.PI * 2, i * 2.4);
+        sent++;
       }
-      if (n > 1) { this.say(n + ' missiles inbound'); }
+      // whatever the ceiling turned away is still owed, so the rockets
+      // issued for it still have something to shoot at
+      if (sent < item.n) { this.queue.unshift({ name: item.name, n: item.n - sent }); }
+      this.trickleLeft = this.queue.length;
+      if (sent > 1) { this.say(sent + ' missiles inbound'); }
     },
 
     spawnOne: function (name, a, lag, opts) {
@@ -5199,6 +5709,7 @@
       var s = Math.min(dt, 60) / 1000;
       this.stepFx(s);
       this.stepBreath(s);
+      this.stepLoadoutRay();
       if (this.paused || !this.running) { return; }
       this.stepRockets(s);
       this.stepDelegated();
@@ -5248,6 +5759,8 @@
     music: Music,
     view: VIEW,
     loadout: LOADOUT,
+    advisor: ADVISOR,
+    LO: LO,
     roe: roeVerdict,
     quality: trackQuality,
     axes: ROE_AXES,
