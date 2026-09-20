@@ -638,7 +638,7 @@
     <a-entity id="ship" warship></a-entity>
     <a-entity id="loPanel" lo-panel></a-entity>
 
-    <a-entity id="rig" position="0 4.6 0">
+    <a-entity id="rig" position="0 16 0">
       <a-entity id="cam" camera look-controls="pointerLockEnabled: true" position="0 1.6 0" desktop-gun>
         <a-entity id="visor" position="0 0 -0.32" visor-flash></a-entity>
         <a-entity id="aarPanel" position="0 0 -1.45" aar-panel></a-entity>
@@ -733,13 +733,14 @@
 
     <div id="vbay">
       <div class="vhead">
-        <span class="vtitle">Wave one is blind</span>
+        <span class="vtitle">You start with everything</span>
       </div>
       <p class="vlede">
-        You start with <b>no readouts at all</b> &mdash; aircraft in the sky and your own
-        judgement. Between waves you choose which feeds to run, how much each one
-        counts, and what your rules say is hostile. You never get every feed, so
-        what you leave off is the decision.
+        Every feed is running from the first contact &mdash; range, size, speed,
+        transponder, the nearest-contact arrow and the classifier's probability.
+        Between waves you decide what to <b>switch off</b>, how much each source
+        counts toward the confidence figure, and what your rules call hostile.
+        A cluttered scope is its own kind of blind.
       </p>
     </div>
 
@@ -1372,112 +1373,110 @@
      a frigate. Everything is laid out so it never blocks the sky you have to
      watch: the superstructure and mast sit ABAFT of where you stand, the bow
      runs away forward, and the railings are low enough to see over. */
-  var DECK_Y = 4.6;          // height of the deck above the waterline
+  var DECK_Y  = 4.6;         // deck above the waterline
+  var TOWER_Y = 16.0;        // the watch platform: the highest thing on the ship
 
   AFRAME.registerComponent('warship', {
     init: function () {
       var g = new THREE.Group();
-      var hullMat  = mat(0x3E464F, { emissive: 0x272D34 });
-      var deckMat  = mat(0x4A525B, { emissive: 0x2E343B });
-      var dark     = mat(0x2A3038, { emissive: 0x1B2026 });
-      var pale     = mat(0x6E7883, { emissive: 0x424A53 });
+      var hullMat = mat(0x3E464F, { emissive: 0x272D34 });
+      var deckMat = mat(0x4A525B, { emissive: 0x2E343B });
+      var dark    = mat(0x2A3038, { emissive: 0x1B2026 });
+      var pale    = mat(0x6E7883, { emissive: 0x424A53 });
 
-      // --- hull: a long box with a tapered forefoot, sitting in the water
-      var hull = new THREE.Mesh(new THREE.BoxGeometry(13, DECK_Y + 1.6, 46), hullMat);
-      hull.position.set(0, DECK_Y / 2 - 0.8, 4);
-      hull.name='hull'; g.add(hull);
+      /* Deliberately a small, compact boat. A 100 m frigate looks better in a
+         screenshot, but from a tower amidships its own foredeck hides the sea
+         for thirty-odd metres in every direction — which is exactly where the
+         surface contacts are. A short hull means a steep look-down angle over
+         the rail, so the water is visible almost to the waterline. */
+      var LEN = 11, BEAM = 5.8;
+
+      var hull = new THREE.Mesh(
+        new THREE.BoxGeometry(BEAM, DECK_Y + 1.4, LEN), hullMat);
+      hull.position.set(0, DECK_Y / 2 - 0.7, 0);
+      hull.name = 'hull'; g.add(hull);
 
       var bowGeo = new THREE.ConeGeometry(1, 1, 4);
-      bowGeo.rotateY(Math.PI / 4);        // flat faces port and starboard
-      bowGeo.rotateX(-Math.PI / 2);       // apex forward, along -z
-      bowGeo.scale(6.5, (DECK_Y + 1.6) / 2, 16);
+      bowGeo.rotateY(Math.PI / 4);
+      bowGeo.rotateX(-Math.PI / 2);
+      bowGeo.scale(BEAM / 2, (DECK_Y + 1.4) / 2, 3);
       var bow = new THREE.Mesh(bowGeo, hullMat);
-      bow.position.set(0, DECK_Y / 2 - 0.8, -27);
+      bow.position.set(0, DECK_Y / 2 - 0.7, -6.5);
       bow.name = 'bow'; g.add(bow);
 
-      // --- deck you stand on
-      var deck = new THREE.Mesh(new THREE.BoxGeometry(12.6, 0.3, 46), deckMat);
-      deck.position.set(0, DECK_Y, 4);
-      deck.name='deck'; g.add(deck);
-      /* A genuinely flat triangle, so it cannot stand up into the sightline.
-         Rotating -90 about x sends the shape's +y to world -z, which is
-         forward, so the apex lands at the bow. */
+      var deck = new THREE.Mesh(new THREE.BoxGeometry(BEAM - 0.3, 0.3, LEN), deckMat);
+      deck.position.set(0, DECK_Y, 0);
+      deck.name = 'deck'; g.add(deck);
+
       var fd = new THREE.Shape();
-      fd.moveTo(-6.3, 0); fd.lineTo(6.3, 0); fd.lineTo(0, 16); fd.lineTo(-6.3, 0);
+      fd.moveTo(-BEAM / 2 + 0.2, 0); fd.lineTo(BEAM / 2 - 0.2, 0);
+      fd.lineTo(0, 2.5); fd.lineTo(-BEAM / 2 + 0.2, 0);
       var fdGeo = new THREE.ShapeGeometry(fd);
       fdGeo.rotateX(-Math.PI / 2);
       var foredeck = new THREE.Mesh(fdGeo, deckMat);
-      foredeck.position.set(0, DECK_Y + 0.16, -19);
+      foredeck.position.set(0, DECK_Y + 0.16, -5.5);
       foredeck.name = 'foredeck'; g.add(foredeck);
 
-      // --- superstructure: behind you, so the sky ahead stays clear
-      var house = new THREE.Mesh(new THREE.BoxGeometry(8.4, 4.2, 11), pale);
-      house.name='house'; house.position.set(0, DECK_Y + 2.25, 14); g.add(house);
-      var bridge = new THREE.Mesh(new THREE.BoxGeometry(7.0, 2.6, 6.0), pale);
-      bridge.position.set(0, DECK_Y + 5.6, 11.5); g.add(bridge);
-      var glass = new THREE.Mesh(new THREE.BoxGeometry(7.05, 1.1, 0.2),
+      // low deckhouse, well aft and well under the platform
+      var house = new THREE.Mesh(new THREE.BoxGeometry(4.0, 2.2, 3.4), pale);
+      house.position.set(0, DECK_Y + 1.55, 3.6);
+      house.name = 'house'; g.add(house);
+      var glass = new THREE.Mesh(new THREE.BoxGeometry(5.65, 0.8, 0.2),
         new THREE.MeshStandardMaterial({ color: 0x0E1A24, emissive: 0x16303F,
                                          roughness: 0.15, metalness: 0.6 }));
-      glass.position.set(0, DECK_Y + 5.9, 8.45); g.add(glass);
+      glass.position.set(0, DECK_Y + 2.1, 1.85); g.add(glass);
 
-      // mast and the dish that is notionally feeding your scope
-      var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.34, 7.5, 8), dark);
-      mast.position.set(0, DECK_Y + 10.4, 13); g.add(mast);
-      var array = new THREE.Mesh(new THREE.BoxGeometry(3.4, 2.2, 0.35), dark);
-      array.position.set(0, DECK_Y + 12.6, 13); g.add(array);
+      /* ---- the watchtower -------------------------------------------- */
+      var towerMat = mat(0x39414A, { emissive: 0x242A31 });
+      var col = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.42, 0.95, TOWER_Y - DECK_Y, 10), towerMat);
+      col.position.set(0, (TOWER_Y + DECK_Y) / 2, 0);
+      col.name = 'tower'; g.add(col);
+
+      for (var L = 0; L < 3; L++) {
+        var a = L * Math.PI * 2 / 3 + Math.PI / 6;
+        var leg = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.1, 0.1, 7.2, 6), towerMat);
+        leg.position.set(Math.cos(a) * 1.25, DECK_Y + 3.2, Math.sin(a) * 1.25);
+        leg.rotation.z = -Math.cos(a) * 0.26;
+        leg.rotation.x =  Math.sin(a) * 0.26;
+        leg.name = 'leg'; g.add(leg);
+      }
+
+      /* No rail. A rail at chest height is precisely the thing that would sit
+         in front of a contact low on the horizon, which is the one place you
+         cannot afford anything to be. */
+      var plat = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.7, 0.7, 0.14, 16), towerMat);
+      plat.position.set(0, TOWER_Y - 0.07, 0);
+      plat.name = 'platform'; g.add(plat);
+
+      var array = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.5, 0.26), dark);
+      array.position.set(0, TOWER_Y - 3.0, 0);
+      array.name = 'array'; g.add(array);
       this.array = array;
 
-      // --- forward armament, for the silhouette
-      var barbette = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.9, 0.8, 12), pale);
-      barbette.name='barbette'; barbette.position.set(0, DECK_Y + 0.55, -19); g.add(barbette);
-      var turret = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.3, 3.4), pale);
-      turret.name='turret'; turret.position.set(0, DECK_Y + 1.0, -19.4); g.add(turret);
-      var barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.18, 4.6, 10), dark);
-      barrel.rotation.x = Math.PI / 2.06;
-      barrel.name='barrel'; barrel.position.set(0, DECK_Y + 1.25, -22.3); g.add(barrel);
+      /* There was a gun mount here. It looked right and it cost a contact
+         two metres of visibility on the way in, so it is gone: nothing on
+         this boat exists that you cannot see past. */
 
-      // vertical launch cells forward: a grid of dark hatches
-      for (var cx = -1; cx <= 1; cx++) {
-        for (var cz = 0; cz < 4; cz++) {
-          var cell = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.14, 1.5), dark);
-          cell.position.set(cx * 1.9, DECK_Y + 0.2, -9 - cz * 1.9);
-          g.add(cell);
-        }
-      }
-
-      // --- railings: low, so nothing you need to see is behind them
-      var railMat = new THREE.MeshBasicMaterial({ color: 0x8C99A6, fog: false });
-      var postGeo = new THREE.CylinderGeometry(0.045, 0.045, 1.1, 5);
-      var rails = new THREE.Group();
-      for (var side = -1; side <= 1; side += 2) {
-        for (var z = -22; z <= 26; z += 2) {
-          var post = new THREE.Mesh(postGeo, railMat);
-          post.position.set(side * 6.2, DECK_Y + 0.7, z);
-          rails.add(post);
-        }
-        [0.45, 1.05].forEach(function (h) {
-          var wire = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 48), railMat);
-          wire.position.set(side * 6.2, DECK_Y + 0.15 + h, 2);
-          rails.add(wire);
-        });
-      }
-      g.add(rails);
-
-      // --- a bow wave and stern wake, so the ship reads as under way
-      var wake = new THREE.Mesh(new THREE.PlaneGeometry(12, 40),
+      var wake = new THREE.Mesh(new THREE.PlaneGeometry(7, 26),
         new THREE.MeshBasicMaterial({ color: 0xCFE6F5, transparent: true,
                                       opacity: 0.22, fog: false,
                                       side: THREE.DoubleSide }));
       wake.rotation.x = -Math.PI / 2;
-      wake.position.set(0, 0.22, 46);
+      wake.position.set(0, 0.22, 21);
+      wake.name = 'wake';
+      // it is a translucent smear on the water; it should not block a
+      // sightline, a bullet, or a test
+      wake.raycast = function () {};
       g.add(wake);
       this.wake = wake;
 
-      // deck lighting, kept dim: this is a darkened ship
-      [[-5.4, -2], [5.4, -2], [-5.4, 18], [5.4, 18]].forEach(function (L) {
-        var lamp1 = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 6), lamp(0xFF6A4A));
-        lamp1.position.set(L[0], DECK_Y + 1.25, L[1]);
-        g.add(lamp1);
+      [[-2.2, -1.5], [2.2, -1.5], [-2.2, 4], [2.2, 4]].forEach(function (P) {
+        var lmp = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), lamp(0xFF6A4A));
+        lmp.position.set(P[0], DECK_Y + 0.6, P[1]);
+        lmp.name = 'lamp'; g.add(lmp);
       });
 
       this.el.setObject3D('mesh', g);
@@ -1485,11 +1484,8 @@
 
     tick: function (time, dt) {
       if (!dt) { return; }
-      // the array turns, slowly, because a radar that does not is a prop
       if (this.array) { this.array.rotation.y = (time / 4200) % (Math.PI * 2); }
-      if (this.wake) {
-        this.wake.material.opacity = 0.18 + Math.sin(time / 700) * 0.05;
-      }
+      if (this.wake) { this.wake.material.opacity = 0.18 + Math.sin(time / 700) * 0.05; }
     }
   });
 
@@ -1515,7 +1511,7 @@
       }
       this.t = 0;
       var ring = new THREE.Group();
-      ring.position.z = 4.80;            // the deck, not the water (this entity is rotated flat,
+      ring.position.z = 16.02;            // the deck, not the water (this entity is rotated flat,
                                          // so its local z is world height)
       // 12 m is the shotgun's reach, so it gets the bright marking
       [[6, 0x2A4A66, 0.20], [12, AMBER, 0.50], [20, 0x2A4A66, 0.22], [30, 0x2A4A66, 0.15]]
@@ -1851,7 +1847,7 @@
         }).join(' \u00b7 ');
         x.font = '600 23px "IBM Plex Mono", ui-monospace, monospace';
         x.fillStyle = '#38B6F0';
-        x.fillText('\u25c6 CLASSIFIER SUGGESTS: ' + names + '   (' + adv.stated +
+        x.fillText('\u25c6 CLASSIFIER ' + (adv.mode === 'drop' ? 'WOULD DROP' : 'SUGGESTS') + ': ' + names + '   (' + adv.stated +
                    '% sure \u00b7 trained ' + adv.trained + '%)', LO.PADX, 146);
       }
 
@@ -2887,12 +2883,10 @@
        The allowance grows, but never fast enough to stop it being a choice. */
     COSTED: ['size', 'speed', 'range', 'xpdr', 'ai', 'arrow'],
 
-    channels: function () {
-      var g = window.DroneRange && window.DroneRange.game && window.DroneRange.game();
-      var wave = g ? g.wave : 1;
-      if (wave <= 1) { return 0; }
-      return Math.min(this.COSTED.length, wave);
-    },
+    /* No scarcity: you are given the lot. The counter is left in because
+       seeing '6 / 6 running' next to a cluttered scope is the prompt to
+       start turning things off. */
+    channels: function () { return this.COSTED.length; },
 
     spent: function () {
       var n = 0;
@@ -2969,7 +2963,7 @@
     /* Reasons are specific because a recommendation you cannot interrogate
        is just an order. */
     suggest: function (game) {
-      var out = [], seen = {};
+      var out = [], seen = {}, i;
       var add = function (key, why, weight) {
         if (seen[key] || VIEW.on[key]) { return; }
         seen[key] = true;
@@ -2977,49 +2971,70 @@
       };
 
       var q = game.queue || [];
-      var counts = { missile: 0, jet: 0, airliner: 0, bird: 0, drone: 0 };
-      for (var i = 0; i < q.length; i++) {
+      var counts = { missile: 0, jet: 0, airliner: 0, bird: 0, drone: 0,
+                     usv: 0, torpedo: 0, fishing: 0 };
+      for (i = 0; i < q.length; i++) {
         counts[q[i].name] = (counts[q[i].name] || 0) + q[i].n;
       }
-      var civilians = counts.airliner + counts.bird;
+      var civilians = counts.airliner + counts.bird + counts.fishing;
+      var armoured = counts.missile + counts.usv + counts.torpedo;
       var lastWave = game.wave - 1;
-      var lost = 0, spoofed = 0, blindCalls = 0;
+      var lost = 0, spoofed = 0;
       for (i = 0; i < game.log.length; i++) {
         var r = game.log[i];
         if (r.wave !== lastWave) { continue; }
         if (r.action === 'engaged' && !r.hostile) { lost++; }
         if (r.spoofed) { spoofed++; }
-        if (r.ai === null) { blindCalls++; }
       }
 
       if (lost > 0) {
         add('xpdr', 'you lost ' + lost + ' civilian' + (lost > 1 ? 's' : '') +
             ' last wave; the transponder separates them fastest', 'high');
-        add('profile', 'optical would have shown you the airframe in time', 'high');
       }
       if (spoofed > 0) {
-        add('band', spoofed + ' contact' + (spoofed > 1 ? 's were' : ' was') +
-            ' spoofing a sensor; track status is where the disagreement shows');
-        add('emissn', 'a second independent source is how you catch a liar');
+        add('size', spoofed + ' contact' + (spoofed > 1 ? 's were' : ' was') +
+            ' spoofing a sensor; a second source is how you catch a liar');
       }
-      if (counts.missile >= 3) {
-        add('range', counts.missile + ' missiles this wave and they close fast');
+      if (armoured >= 3) {
+        add('range', armoured + ' armoured contacts this wave and they close fast');
         add('arrow', 'the arrow finds the nearest one before it finds you');
       }
       if (civilians >= 3) {
-        add('xpdr', civilians + ' civilian contacts are coming; the transponder is the cheap discriminator', 'high');
+        add('xpdr', civilians + ' civilian contacts are coming; the transponder is ' +
+            'the cheap discriminator', 'high');
       }
-      if (blindCalls > 1) {
-        add('ring', 'you were calling contacts with nothing tracked at all');
-      }
-      add('pct', 'the confidence figure tells you when you have enough to act');
-      add('ai', 'my read, for whatever you judge it to be worth');
       add('speed', 'closing rate is the cheapest early discriminator');
+      add('ai', 'my read, for whatever you judge it to be worth');
 
-      /* Its confidence in its own advice climbs with training — faster than
-         the advice actually improves. That gap is the point. */
+      /* Everything is on by default, so most of the time it has nothing to
+         add — and a recommendation box with nothing in it is worse than
+         none. When that happens it argues the other way: what is on your
+         scope that is not earning its place this wave. */
+      var mode = 'add';
+      if (!out.length) {
+        mode = 'drop';
+        var drop = function (key, why) {
+          if (seen[key] || !VIEW.on[key]) { return; }
+          seen[key] = true;
+          out.push({ key: key, why: why, weight: LOADOUT.weight[key] || 'normal' });
+        };
+        if (!civilians) {
+          drop('xpdr', 'nothing civilian is coming this wave; the squawk has ' +
+               'nothing to tell you apart');
+        }
+        if (armoured < 2) {
+          drop('arrow', 'nothing fast enough this wave to need finding early');
+        }
+        if (AI_TRAIN.recompute() < 0.15) {
+          drop('ai', 'I am still at a coin flip on most of these \u2014 I am ' +
+               'taking up space I have not earned');
+        }
+        drop('size', 'return size and speed say much the same thing at this range');
+        drop('speed', 'you can read closing rate off the bracket without the number');
+      }
+
       var sure = 50 + Math.round(AI_TRAIN.recompute() * 45);
-      return { picks: out.slice(0, Math.max(1, LOADOUT.channels())), stated: sure,
+      return { picks: out.slice(0, 3), mode: mode, stated: sure,
                trained: Math.round(AI_TRAIN.level * 100) };
     },
 
@@ -3164,9 +3179,8 @@
     }
     return pr.name;
   };
-  VIEW.all(false);          // wave one runs blind; every readout is earned
-  VIEW.on.ring = true;      // the bracket is free: something is there.
-                            // Which one is nearest is information, so it is not.
+  VIEW.all(true);           // everything on from the first contact
+  VIEW.on.ring = true;      // the bracket is never spent and never off
 
   var SIGNATURE = {
     drone:    { profile: 'QUADROTOR', emissn: 'ELECTRIC',  xpdr: 'NONE' },
@@ -5391,7 +5405,8 @@
 
       var adv = ADVISOR.suggest(this);
       h += '<div class="advice"><div class="advhead">' +
-           '<span class="advwho">Classifier recommends</span>' +
+           '<span class="advwho">' + (adv.mode === 'drop'
+             ? 'Classifier suggests dropping' : 'Classifier recommends') + '</span>' +
            '<span class="advsure">' + adv.stated + '% confident \u00b7 trained ' +
            adv.trained + '%</span></div><ul class="advlist">';
       for (var a = 0; a < adv.picks.length; a++) {
@@ -5402,7 +5417,9 @@
         h += '<li><b>' + nm + '</b> &mdash; ' + pk.why + '</li>';
       }
       h += '</ul><div class="advrow">' +
-           '<button class="gun advtake" id="advTake">Take the recommendation</button>' +
+           '<button class="gun advtake" id="advTake">' +
+           (adv.mode === 'drop' ? 'Drop those three' : 'Take the recommendation') +
+           '</button>' +
            '<span class="advwarn">It sounds this certain whether or not it can see anything.</span>' +
            '</div><p class="advrule">' + ADVISOR.ruleHint(this) + '</p></div>';
 
@@ -5523,9 +5540,12 @@
         take.addEventListener('click', function () {
           var adv = ADVISOR.suggest(self);
           for (var i = 0; i < adv.picks.length; i++) {
-            if (!LOADOUT.canAdd()) { break; }
-            VIEW.set(adv.picks[i].key, true);
-            LOADOUT.weight[adv.picks[i].key] = adv.picks[i].weight;
+            if (adv.mode === 'drop') {
+              VIEW.set(adv.picks[i].key, false);
+            } else if (LOADOUT.canAdd()) {
+              VIEW.set(adv.picks[i].key, true);
+              LOADOUT.weight[adv.picks[i].key] = adv.picks[i].weight;
+            }
           }
           self.tookAdvice = true;
           repaint();
@@ -5676,9 +5696,12 @@
       if (r.kind === 'advice') {
         var adv = ADVISOR.suggest(this);
         for (var a = 0; a < adv.picks.length; a++) {
-          if (!LOADOUT.canAdd()) { break; }
-          VIEW.set(adv.picks[a].key, true);
-          LOADOUT.weight[adv.picks[a].key] = adv.picks[a].weight;
+          if (adv.mode === 'drop') {
+            VIEW.set(adv.picks[a].key, false);
+          } else if (LOADOUT.canAdd()) {
+            VIEW.set(adv.picks[a].key, true);
+            LOADOUT.weight[adv.picks[a].key] = adv.picks[a].weight;
+          }
         }
         this.drawLoadoutPanel();
         return;
@@ -5851,7 +5874,7 @@
       LOADOUT.speedOver = 0;
       LOADOUT.init();
 
-      VIEW.all(false);          // wave one is blind again
+      VIEW.all(true);           // a fresh run is fully instrumented again
       VIEW.commit();
 
       HR.load = 0;
