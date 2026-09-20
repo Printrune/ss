@@ -344,6 +344,11 @@
                        color: #0b1016; font-weight: 700; }
   .restnote { font-size: 11px; color: var(--alarm); opacity: .85; }
 
+  .gun .rng { font-size: 11px; font-weight: 700; letter-spacing: .04em;
+              color: #0b1016; background: var(--amber);
+              border-radius: 2px; padding: 1px 5px; margin-left: 7px; }
+  .gun .rng.tight { background: var(--alarm); color: #fff; }
+
   .accrow { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
   .acc { display: inline-flex; align-items: baseline; gap: 6px;
          font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px;
@@ -689,7 +694,7 @@
       <div id="toast"></div>
     </div>
     <div id="guns">
-      <button class="gun on" id="gunSg" type="button"><span class="key">1</span> Shotgun</button>
+      <button class="gun on" id="gunSg" type="button"><span class="key">1</span> Shotgun <span class="rng" id="sgRange">12 m</span></button>
       <button class="gun rk" id="gunRk" type="button"><span class="key">2</span> Rocket</button>
       <button class="gun ps" id="gunPs" type="button"><span class="key">3</span> Pistol <span class="inf">&infin;</span></button>
     </div>
@@ -2549,7 +2554,15 @@
       return Math.min(1, (g.wave - 1) * 0.15 + g.live.length * 0.075);
     },
 
+    /* Pulled right down while the breathing exercise is speaking. Not muted:
+       a track that vanishes and reappears is more distracting than one that
+       steps back, and the point is only that the voice sits on top. */
+    ducked: false,
+    DUCK_TO: 0.04,
+    duck: function (on) { this.ducked = !!on; },
+
     target: function () {
+      if (this.ducked) { return this.DUCK_TO; }
       var s = this.tension();
       // eased, so it hangs low while things are calm and climbs steeply
       var curve = s * s * (3 - 2 * s);
@@ -2578,7 +2591,7 @@
     pump: function () {
       if (!this.el || this.el.paused) { return; }
       var t = this.target();
-      this.vol += (t - this.vol) * 0.12;
+      this.vol += (t - this.vol) * (this.ducked ? 0.45 : 0.12);
       this.el.volume = Math.max(0, Math.min(1, this.vol));
     },
 
@@ -3524,14 +3537,10 @@
     OVER: 100,                // bpm above which it is offered at all
     active: false, t: 0, done: null, skipped: false,
 
-    /* Two conditions, both necessary. A high pulse after a clean round is
-       just intensity and does not need interrupting; a mistake with a settled
-       pulse does not either. It is the pair that is worth stopping for. */
-    needed: function () {
-      if (!HR.live() || HR.bpm <= this.OVER) { return false; }
-      var g = window.DroneRange && window.DroneRange.game && window.DroneRange.game();
-      return !!(g && g.lastMistakes > 0);
-    },
+    /* Every round, unconditionally. It was gated on pulse and mistakes, and
+       the effect of that was that most rounds never offered it at all — the
+       one thing it exists to do. Seven seconds between waves is cheap. */
+    needed: function () { return true; },
 
     span: function () { return this.IN + this.OUT; },
 
@@ -3542,12 +3551,14 @@
       this.done = done || null;
       this.startStress = HR.stress();
       this._saidOut = false;
+      Music.duck(true);            // spoken guidance is useless under a mix
       SAY.speak('Breathe in, slowly');
     },
 
     finish: function () {
       if (!this.active) { return; }
       this.active = false;
+      Music.duck(false);
       if (this.skipped) {
         SAY.hush();
       } else {
@@ -4000,11 +4011,11 @@
      and rocket ignore it and kill outright. A cruise missile's casing simply
      will not take a pistol round — that is what pistolProof means. */
   var TYPES = {
-    drone:    { build: buildDrone,    hostile: true,  move: 'home',  speed: [1.4, 3.6],  points: 10,  alt: [1.8, 6.2],  hp: 3 },
-    missile:  { build: buildMissile,  hostile: true,  move: 'home',  speed: [7.0, 11.0], points: 30,  alt: [1.4, 3.4],  hp: 1, pistolProof: true },
-    jet:      { build: buildJet,      hostile: true,  move: 'cross', speed: [9.0, 13.0], points: 20,  alt: [7, 14],     hp: 4 },
-    airliner: { build: buildAirliner, hostile: false, move: 'cross', speed: [5.0, 7.0],  points: -60, alt: [16, 26],    hp: 2 },
-    bird:     { build: buildBird,     hostile: false, move: 'cross', speed: [2.6, 4.2],  points: -25, alt: [2.2, 7.0],  hp: 1 },
+    drone:    { build: buildDrone,    hostile: true,  move: 'home',  speed: [1.4, 3.6],  points: 10,  alt: [12, 22],    hp: 3 },
+    missile:  { build: buildMissile,  hostile: true,  move: 'home',  speed: [7.0, 11.0], points: 30,  alt: [13, 20],    hp: 1, pistolProof: true },
+    jet:      { build: buildJet,      hostile: true,  move: 'cross', speed: [9.0, 13.0], points: 20,  alt: [17, 27],    hp: 4 },
+    airliner: { build: buildAirliner, hostile: false, move: 'cross', speed: [5.0, 7.0],  points: -60, alt: [26, 36],    hp: 2 },
+    bird:     { build: buildBird,     hostile: false, move: 'cross', speed: [2.6, 4.2],  points: -25, alt: [13, 21],    hp: 1 },
 
     /* On the water. rocketOnly means a hull shrugs off small arms: the
        launcher is the only thing that answers them, which is what makes the
@@ -4186,8 +4197,8 @@
         o.position.x += (-dz / len) * wob;
         o.position.z += (dx / len) * wob;
 
-        this.baseY += (dy / len) * v * 0.4 + this.climb * s;
-        this.baseY = Math.max(1.2, Math.min(28, this.baseY));
+        this.baseY += (dy / len) * v + this.climb * s;
+        this.baseY = Math.max(1.2, Math.min(40, this.baseY));
         o.rotation.y = Math.atan2(dx, dz);
       } else {
         if (!this.dir) { this.setHeading(new THREE.Vector3(1, 0, 0)); }
@@ -5141,6 +5152,7 @@
 
     /* Between waves, and only when the pulse warrants it. */
     offerBreath: function (then) {
+      if (this._skipBreath) { this._skipBreath = false; then(); return; }
       if (!BREATHE.needed()) { then(); return; }
       var self = this;
       this.say('Pulse is up \u2014 take one breath');
@@ -5158,6 +5170,41 @@
       this.hands.forEach(function (h) {
         if (h) { h.addEventListener('triggerdown', self._brVR); }
       });
+    },
+
+    /* Where the shotgun stops working, drawn at that radius around you and
+       at your own height. The number on the chip tells you it is twelve
+       metres; this tells you where twelve metres actually is. It shrinks
+       live as stress closes the pattern down, which is the part a number
+       alone never conveys. */
+    stepReach: function (time) {
+      var cam = this.el.camera;
+      if (!cam) { return; }
+      if (!this.reachRing) {
+        var geo = new THREE.RingGeometry(0.97, 1.0, 96);
+        geo.rotateX(-Math.PI / 2);
+        this.reachRing = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+          color: 0xFFB020, transparent: true, opacity: 0.30,
+          side: THREE.DoubleSide, depthTest: false, fog: false
+        }));
+        this.reachRing.renderOrder = 996;
+        this.el.object3D.add(this.reachRing);
+      }
+      var show = this.running && !this.paused && this.deskWeapon === 'shotgun';
+      this.reachRing.visible = !!show;
+      if (!show) { return; }
+
+      var r = stressRange();
+      this.reachRing.scale.set(r, 1, r);
+      this.reachRing.position.set(this.target.x, this.target.y - 0.35, this.target.z);
+      this.reachRing.material.opacity = 0.22 + Math.sin(time / 520) * 0.07;
+
+      var lbl = document.getElementById('sgRange');
+      if (lbl) {
+        var txt = (r < SHOTGUN_RANGE - 0.3 ? Math.round(r) + ' m' : '12 m');
+        if (lbl.textContent !== txt) { lbl.textContent = txt; }
+        lbl.classList.toggle('tight', r < SHOTGUN_RANGE - 0.3);
+      }
     },
 
     stepArrow: function () {
@@ -5881,7 +5928,8 @@
       if (HR.sim) { HR.settle(); }
 
       this.armWave();
-      this.say('Run restarted \u2014 wave 1, no feeds');
+      this.say('Run restarted \u2014 wave 1');
+      this._skipBreath = true;      // you asked to play, not to breathe
       this.resume();
     },
 
@@ -6059,7 +6107,7 @@
           if (!c) { return; }
           // How close the crossing path passes. Birds come in low and near so
           // they genuinely stray into shotgun range — that choice is the game.
-          var band = name === 'bird' ? [1.5, 9]
+          var band = name === 'bird' ? [1.5, 8]
                    : name === 'airliner' ? [8, 26]
                    : name === 'fishing' ? [9, 24]      // trawlers keep their distance
                    : [5, 18];
@@ -6300,6 +6348,7 @@
       }
 
       this.autoHR();
+      this.stepReach(time);
       this.stepArrow();
 
       this.sinceSpawn += dt;
