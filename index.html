@@ -349,22 +349,33 @@
               border-radius: 2px; padding: 1px 5px; margin-left: 7px; }
   .gun .rng.tight { background: var(--alarm); color: #fff; }
 
-  /* ------------------------------------------------- phone: contacts only
-     Everything that is a readout about the RUN goes; everything that is a
-     readout about a CONTACT stays, because the per-contact markers are canvas
-     sprites inside the 3D scene rather than DOM, so none of this touches
-     them. The crosshair stays: it is an aiming reference, not data. */
-  [data-device="phone"] #dials,
-  [data-device="phone"] #belt,
-  [data-device="phone"] #viewchips,
-  [data-device="phone"] #lockhint,
-  [data-device="phone"] #guns { display: none !important; }
+  /* Top left, above everything, and clickable whatever else is going on —
+     including while the mouse is captured for looking around. */
+  #hudBtn {
+    position: fixed;
+    top: calc(10px + env(safe-area-inset-top, 0px));
+    left: calc(10px + env(safe-area-inset-left, 0px));
+    z-index: 20;
+    pointer-events: auto;
+    font-family: "Saira", system-ui, sans-serif;
+    font-size: 11px; font-weight: 700; letter-spacing: .14em;
+    text-transform: uppercase;
+    padding: 9px 13px; border-radius: 4px; cursor: pointer;
+    background: rgba(10, 16, 25, .82);
+    border: 1px solid rgba(120,146,174,.45);
+    color: var(--ice);
+    -webkit-tap-highlight-color: transparent;
+  }
+  #hudBtn:hover { border-color: var(--cyan); color: var(--cyan); }
+  #hudBtn.off { border-color: rgba(255,176,32,.6); color: var(--amber); }
+  /* big enough to hit with a thumb */
+  @media (max-width: 820px) { #hudBtn { padding: 12px 16px; font-size: 12px; } }
 
-  /* the start menu keeps its buttons but loses the diagnostics table and the
-     desktop-only instructions */
-  [data-device="phone"] #diag,
-  [data-device="phone"] .foot { display: none; }
-  [data-device="phone"] .card { padding-bottom: 8px; }
+  /* what the switch actually turns off */
+  body.nohud #dials,
+  body.nohud #belt,
+  body.nohud #viewchips,
+  body.nohud #lockhint { display: none !important; }
 
   .accrow { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
   .acc { display: inline-flex; align-items: baseline; gap: 6px;
@@ -725,10 +736,11 @@
       <span id="viewnow"></span>
       <span id="chanline"></span>
     </div>
-    <div id="lockhint"><b id="relock">Click the view</b> to capture the mouse and look 360&deg;. Press <b>Esc</b> to free it. Weapon keys <b>1</b> / <b>2</b> / <b>Q</b> work either way. Hold <b>V</b> to talk, <b>F</b> cycles the display.</div>
+    <div id="lockhint"><b id="relock">Click the view</b> to capture the mouse and look 360&deg;. Press <b>Esc</b> to free it, <b>H</b> to hide the boxes. Weapon keys <b>1</b> / <b>2</b> / <b>Q</b> work either way. Hold <b>V</b> to talk, <b>F</b> cycles the display.</div>
   </div>
 </div>
 
+<button id="hudBtn" type="button" title="Show or hide the readout boxes">HUD</button>
 <div id="cross"></div>
 <div id="vrbanner"></div>
 <div id="aar"></div>
@@ -813,7 +825,34 @@
     return kind;
   }
 
-  classify(false);            // a first guess so the CSS applies immediately
+  classify(false);            // still useful as a hint, but nothing hides on it
+
+  /* ------------------------------------------------------- the HUD switch
+     Wired here, before the engine, so it works on a page where A-Frame has
+     not loaded yet — and so a bad guess about the device can never be the
+     reason the readouts are missing. The in-scene panels are 3D and cannot be
+     reached by CSS, so the game component reads window.__hudOff each frame. */
+  window.__hudOff = false;
+  (function () {
+    var btn = document.getElementById('hudBtn');
+    if (!btn) { return; }
+    var apply = function () {
+      document.body.classList.toggle('nohud', window.__hudOff);
+      btn.classList.toggle('off', window.__hudOff);
+      btn.textContent = window.__hudOff ? 'HUD OFF' : 'HUD';
+    };
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      window.__hudOff = !window.__hudOff;
+      apply();
+    });
+    // the mouse is captured for looking around, so give it a key as well
+    window.addEventListener('keydown', function (e) {
+      if (e.key === 'h' || e.key === 'H') { window.__hudOff = !window.__hudOff; apply(); }
+    });
+    apply();
+  }());
 
   /* isSessionSupported is the strongest signal there is, but it is a promise,
      so the answer lands a moment later and we re-classify then. A headset can
@@ -878,6 +917,9 @@
     // capture the mouse so the flat-screen view can turn a full 360
     setTimeout(function () {
       if (window.__enteringVR) { return; }
+      var fine = !(window.matchMedia &&
+                   window.matchMedia('(any-pointer: fine)').matches === false);
+      if (!fine) { return; }          // touch screen: never capture the pointer
       if (sc && sc.canvas && sc.canvas.requestPointerLock && !(sc.is && sc.is('vr-mode'))) {
         try { sc.canvas.requestPointerLock(); } catch (e) {}
       }
@@ -4440,8 +4482,15 @@
 
       var hint = document.getElementById('lockhint');
       var relock = document.getElementById('relock');
+      function hasMouse() {
+        return !(window.matchMedia &&
+                 window.matchMedia('(any-pointer: fine)').matches === false);
+      }
       function lock() {
         var cv = sceneEl.canvas;
+        // capturing the pointer on a touch screen gains nothing and costs
+        // every tap: the locked canvas receives them instead of the buttons
+        if (!hasMouse()) { return; }
         if (cv && cv.requestPointerLock && !sceneEl.is('vr-mode')) {
           try { cv.requestPointerLock(); } catch (e) {}
         }
@@ -5237,18 +5286,16 @@
        metres; this tells you where twelve metres actually is. It shrinks
        live as stress closes the pattern down, which is the part a number
        alone never conveys. */
-    /* The score, rockets, radar and vitals panels live in the 3D scene, so
-       the phone stylesheet cannot touch them. On a phone they go too: the
-       instruction was contacts and nothing else. */
-    applyDevice: function () {
-      if (this._deviceDone) { return; }
-      this._deviceDone = true;
-      if (window.__device !== 'phone') { return; }
+    /* The score, rockets, radar and vitals panels are 3D objects, so the
+       stylesheet cannot reach them. They follow the same switch. */
+    stepHud: function () {
+      var off = !!window.__hudOff;
+      if (this._hudWas === off) { return; }
+      this._hudWas = off;
       ['radar', 'vrscore', 'vrrockets', 'vrvitals'].forEach(function (id) {
         var el = document.getElementById(id);
-        if (el && el.object3D) { el.object3D.visible = false; }
+        if (el && el.object3D) { el.object3D.visible = !off; }
       });
-      this.say('Phone display \u2014 contacts only');
     },
 
     stepReach: function (time) {
@@ -6422,7 +6469,7 @@
       }
 
       this.autoHR();
-      this.applyDevice();
+      this.stepHud();
       this.stepReach(time);
       this.stepArrow();
 
