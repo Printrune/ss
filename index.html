@@ -1222,14 +1222,14 @@
 
         // deep trough to lit crest
         var t = Math.max(0, Math.min(1, h * 0.5 + 0.5));
-        var r = 4  + t * 16;
-        var g = 22 + t * 58;
-        var bl = 38 + t * 86;
+        var r = 8  + t * 7;
+        var g = 30 + t * 22;
+        var bl = 52 + t * 34;
 
-        // glint only on the steepest crests, and sparse
-        if (h > 0.72) {
-          var k = (h - 0.72) / 0.28;
-          r += k * 70; g += k * 95; bl += k * 90;
+        // a whisper of glint, not a highlight
+        if (h > 0.86) {
+          var k = (h - 0.86) / 0.14;
+          r += k * 20; g += k * 26; bl += k * 26;
         }
         var i4 = (py * 512 + px) * 4;
         d[i4] = r; d[i4 + 1] = g; d[i4 + 2] = bl; d[i4 + 3] = 255;
@@ -1239,7 +1239,7 @@
 
     var t2 = new THREE.CanvasTexture(cv);
     t2.wrapS = t2.wrapT = THREE.RepeatWrapping;
-    t2.repeat.set(26, 26);
+    t2.repeat.set(70, 70);   // small enough that no single tile reads
     if ('colorSpace' in t2) { t2.colorSpace = THREE.SRGBColorSpace; }
     return t2;
   }
@@ -1350,14 +1350,25 @@
 
   AFRAME.registerComponent('range-floor', {
     init: function () {
-      var water = new THREE.Mesh(
-        new THREE.PlaneGeometry(400, 400),
-        new THREE.MeshStandardMaterial({
-          map: floorTexture(), roughness: 0.34, metalness: 0.28
-        })
-      );
+      /* A texture alone still reads as a painted floor, because the
+         silhouette against the sky never moves. This is real geometry: a
+         subdivided sheet whose vertices ride a sum of travelling swells, so
+         the horizon has a moving edge and contacts on the water sit in it
+         rather than on it. Dense in the middle where you look, coarse at the
+         rim where you cannot tell. */
+      var geo = new THREE.PlaneGeometry(400, 400, 150, 150);
+      var water = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        map: floorTexture(), roughness: 0.22, metalness: 0.42
+      }));
       this.el.setObject3D('mesh', water);
       this.water = water;
+      this.pos = geo.attributes.position;
+      this.base = new Float32Array(this.pos.count * 2);
+      for (var i = 0; i < this.pos.count; i++) {
+        this.base[i * 2] = this.pos.getX(i);
+        this.base[i * 2 + 1] = this.pos.getY(i);
+      }
+      this.t = 0;
       var ring = new THREE.Group();
       // 12 m is the shotgun's reach, so it gets the bright marking
       [[6, 0x2A4A66, 0.20], [12, AMBER, 0.50], [20, 0x2A4A66, 0.22], [30, 0x2A4A66, 0.15]]
@@ -1379,9 +1390,27 @@
     tick: function (time, dt) {
       if (!this.water || !dt) { return; }
       var m = this.water.material.map;
-      if (!m) { return; }
-      m.offset.x = (m.offset.x + dt * 0.0000135) % 1;
-      m.offset.y = (m.offset.y + dt * 0.0000260) % 1;
+      if (m) {
+        m.offset.x = (m.offset.x + dt * 0.0000135) % 1;
+        m.offset.y = (m.offset.y + dt * 0.0000260) % 1;
+      }
+      if (!this.pos) { return; }
+      this.t += Math.min(dt, 60) / 1000;
+      var t = this.t, p = this.pos, b = this.base, n = p.count;
+      for (var i = 0; i < n; i++) {
+        var x = b[i * 2], y = b[i * 2 + 1];
+        // three swells crossing at different angles and speeds; amplitude
+        // falls off far out so the distant sheet stays flat and cheap
+        var d = Math.sqrt(x * x + y * y);
+        var fade = d > 90 ? Math.max(0, 1 - (d - 90) / 90) : 1;
+        if (fade <= 0) { p.setZ(i, 0); continue; }
+        var h = Math.sin(x * 0.085 + t * 1.15) * 0.34
+              + Math.sin(y * 0.062 - t * 0.83) * 0.28
+              + Math.sin((x + y) * 0.037 + t * 0.55) * 0.20;
+        p.setZ(i, h * fade);
+      }
+      p.needsUpdate = true;
+      this.water.geometry.computeVertexNormals();
     }
   });
 
@@ -2671,11 +2700,13 @@
      so a lying sensor fools your rule exactly as it fools the classifier. */
   var ROE_AXES = [
     { key: 'xpdr',   field: 'xpdr',   cue: 'XPDR',    label: 'Transponder',
-      values: ['NONE', 'CIVIL', 'MIL'] },
+      values: ['NONE', 'CIVIL', 'MIL', 'AIS'] },
     { key: 'profile',field: 'profile',cue: 'PROFILE', label: 'Profile',
-      values: ['QUADROTOR', 'CRUISE', 'DELTA', 'AIRLINER', 'ORGANIC'] },
+      values: ['QUADROTOR', 'CRUISE', 'DELTA', 'AIRLINER', 'ORGANIC',
+               'TRAWLER', 'HULL', 'WAKE'] },
     { key: 'emissn', field: 'emissn', cue: 'EMISSN',  label: 'Emission',
-      values: ['ELECTRIC', 'ROCKET', 'TURBOJET', 'TURBOFAN', 'NONE'] }
+      values: ['ELECTRIC', 'ROCKET', 'TURBOJET', 'TURBOFAN', 'NONE',
+               'DIESEL', 'CAVITATION'] }
   ];
 
   var LOADOUT = {
@@ -2975,7 +3006,10 @@
     missile:  { profile: 'CRUISE',    emissn: 'ROCKET',    xpdr: 'NONE' },
     jet:      { profile: 'DELTA',     emissn: 'TURBOJET',  xpdr: 'MIL' },
     airliner: { profile: 'AIRLINER',  emissn: 'TURBOFAN',  xpdr: 'CIVIL' },
-    bird:     { profile: 'ORGANIC',   emissn: 'NONE',      xpdr: 'NONE' }
+    bird:     { profile: 'ORGANIC',   emissn: 'NONE',      xpdr: 'NONE' },
+    fishing:  { profile: 'TRAWLER',   emissn: 'DIESEL',     xpdr: 'AIS' },
+    usv:      { profile: 'HULL',      emissn: 'ELECTRIC',   xpdr: 'NONE' },
+    torpedo:  { profile: 'WAKE',      emissn: 'CAVITATION', xpdr: 'NONE' }
   };
 
   /* A spoofed contact has exactly one sensor returning the wrong thing — a
@@ -3629,6 +3663,105 @@
     return { group: g, led: bcn, radius: 3.6 };
   }
 
+  /* ---------------------------------------------- things on the water
+     Surface contacts sit at the waterline rather than in the sky, so they
+     read against the sea instead of against the horizon. All three are
+     armoured: small arms do nothing to a hull, and that is the point of
+     carrying a launcher. */
+  function buildFishingBoat() {
+    var g = new THREE.Group();
+    var hull = mat(0x6B5138, { emissive: 0x2A2016 });
+    var h = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.52, 4.0), hull);
+    h.position.y = 0.26; g.add(h);
+    var bow = new THREE.Mesh(new THREE.ConeGeometry(0.75, 1.5, 4), hull);
+    bow.rotation.x = -Math.PI / 2; bow.rotation.y = Math.PI / 4;
+    bow.position.set(0, 0.26, 2.6); g.add(bow);
+
+    var house = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.8, 1.2),
+      mat(0xCFD8E0, { emissive: 0x5A6470 }));
+    house.position.set(0, 0.92, -0.7); g.add(house);
+
+    // derrick and booms: the silhouette that says working boat, not warship
+    var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 6),
+      mat(0x9AA3AD, { emissive: 0x3A424A }));
+    mast.position.set(0, 1.9, -0.4); g.add(mast);
+    var boomGeo = new THREE.CylinderGeometry(0.045, 0.045, 2.6, 6);
+    for (var i = 0; i < 2; i++) {
+      var bm = new THREE.Mesh(boomGeo, mat(0x9AA3AD, { emissive: 0x3A424A }));
+      bm.position.set((i ? 1 : -1) * 0.75, 1.85, -0.4);
+      bm.rotation.z = (i ? -1 : 1) * 0.72;
+      g.add(bm);
+    }
+    // the lamps that make it obviously a civilian at night
+    var lamps = new THREE.Group();
+    [[0, 2.9, -0.4, 0xFFFFFF], [-0.62, 1.05, -0.7, 0xFF3B30], [0.62, 1.05, -0.7, 0x35D07F]]
+      .forEach(function (L) {
+        var m = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), lamp(L[3]));
+        m.position.set(L[0], L[1], L[2]); lamps.add(m);
+      });
+    g.add(lamps);
+    return { group: g, led: lamps.children[0], radius: 2.1 };
+  }
+
+  function buildUsv() {
+    var g = new THREE.Group();
+    var skin = mat(0x4A5562, { emissive: 0x39434F });
+    // low, wide, no superstructure: nothing aboard that needs headroom
+    var h = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.34, 4.6), skin);
+    h.position.y = 0.17; g.add(h);
+    var deck = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.16, 3.0),
+      mat(0x323C47, { emissive: 0x262E38 }));
+    deck.position.y = 0.42; g.add(deck);
+    var bow = new THREE.Mesh(new THREE.ConeGeometry(0.6, 1.6, 4), skin);
+    bow.rotation.x = -Math.PI / 2; bow.rotation.y = Math.PI / 4;
+    bow.position.set(0, 0.17, 3.0); g.add(bow);
+
+    var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.0, 6), skin);
+    mast.position.set(0, 0.95, -0.8); g.add(mast);
+    var pod = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8),
+      mat(0x3A4450, { emissive: 0x222A33 }));
+    pod.position.set(0, 1.5, -0.8); g.add(pod);
+    var led = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), lamp(ALARM));
+    led.position.set(0, 1.5, -0.55); g.add(led);
+
+    var wake = new THREE.Mesh(new THREE.ConeGeometry(0.5, 2.2, 8),
+      new THREE.MeshBasicMaterial({ color: 0xBFD8E8, transparent: true,
+                                    opacity: 0.38, fog: false }));
+    wake.rotation.x = Math.PI / 2; wake.position.set(0, 0.06, -3.0); g.add(wake);
+    return { group: g, led: led, radius: 2.3 };
+  }
+
+  function buildTorpedo() {
+    var g = new THREE.Group();
+    var skin = mat(0x56626F, { emissive: 0x424C58 });
+    var body = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 2.2, 12), skin);
+    body.rotation.x = Math.PI / 2; g.add(body);
+    var nose = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 8),
+      mat(0x8A2020, { emissive: 0x4A0E0E }));
+    nose.position.z = 1.1; g.add(nose);
+    var prop = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.19, 0.3, 10), skin);
+    prop.rotation.x = Math.PI / 2; prop.position.z = -1.2; g.add(prop);
+    var finGeo = new THREE.BoxGeometry(0.04, 0.42, 0.34);
+    for (var i = 0; i < 4; i++) {
+      var f = new THREE.Mesh(finGeo, skin);
+      var a = i * Math.PI / 2 + Math.PI / 4;
+      f.position.set(Math.cos(a) * 0.2, Math.sin(a) * 0.2, -0.9);
+      f.rotation.z = a; g.add(f);
+    }
+    /* Mostly submerged: what you actually track is the wake it drags, which
+       is why it is the hardest of the three to see coming. */
+    var wake = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 7.0),
+      new THREE.MeshBasicMaterial({ color: 0xE8F4FC, transparent: true,
+                                    opacity: 0.52, fog: false,
+                                    side: THREE.DoubleSide }));
+    wake.rotation.x = -Math.PI / 2;
+    wake.position.set(0, 0.16, -3.4);
+    g.add(wake);
+    var led = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), lamp(ALARM));
+    led.position.set(0, 0.22, 0.6); g.add(led);
+    return { group: g, led: led, radius: 1.3 };
+  }
+
   function buildBird() {
     var g = new THREE.Group();
     var skin = mat(0x6E7A88, { emissive: 0x4C5560, metalness: 0.0, roughness: 0.9 });
@@ -3659,15 +3792,36 @@
     missile:  { build: buildMissile,  hostile: true,  move: 'home',  speed: [7.0, 11.0], points: 30,  alt: [1.4, 3.4],  hp: 1, pistolProof: true },
     jet:      { build: buildJet,      hostile: true,  move: 'cross', speed: [9.0, 13.0], points: 20,  alt: [7, 14],     hp: 4 },
     airliner: { build: buildAirliner, hostile: false, move: 'cross', speed: [5.0, 7.0],  points: -60, alt: [16, 26],    hp: 2 },
-    bird:     { build: buildBird,     hostile: false, move: 'cross', speed: [2.6, 4.2],  points: -25, alt: [2.2, 7.0],  hp: 1 }
+    bird:     { build: buildBird,     hostile: false, move: 'cross', speed: [2.6, 4.2],  points: -25, alt: [2.2, 7.0],  hp: 1 },
+
+    /* On the water. rocketOnly means a hull shrugs off small arms: the
+       launcher is the only thing that answers them, which is what makes the
+       rocket count a real constraint rather than a formality. */
+    fishing:  { build: buildFishingBoat, hostile: false, move: 'cross', speed: [1.2, 2.4],
+                points: -70, alt: [0, 0], hp: 2, surface: true, rocketOnly: true },
+    usv:      { build: buildUsv,         hostile: true,  move: 'home',  speed: [3.4, 6.0],
+                points: 25, alt: [0, 0], hp: 1, surface: true, rocketOnly: true },
+    torpedo:  { build: buildTorpedo,     hostile: true,  move: 'home',  speed: [5.0, 8.0],
+                points: 35, alt: [0, 0], hp: 1, surface: true, rocketOnly: true }
   };
 
+  function isRocketOnly(name) { return !!(TYPES[name] && TYPES[name].rocketOnly); }
+
   function waveTable(wave) {
-    // wave 1 teaches drones + birds, then missiles take over as the main threat
+    /* Wave 1 teaches the sky. The water arrives in wave 2 with a trawler
+       among the boats, so the first surface contact a player meets is as
+       likely to be a fisherman as a threat. */
     if (wave <= 1) { return [['drone', 6], ['bird', 3], ['missile', 2]]; }
-    if (wave === 2) { return [['drone', 5], ['bird', 2], ['airliner', 2], ['jet', 2], ['missile', 5]]; }
-    if (wave === 3) { return [['drone', 4], ['bird', 2], ['airliner', 2], ['jet', 3], ['missile', 8]]; }
-    return [['drone', 3], ['bird', 2], ['airliner', 3], ['jet', 3], ['missile', 11]];
+    if (wave === 2) {
+      return [['drone', 4], ['bird', 2], ['airliner', 2], ['jet', 2], ['missile', 4],
+              ['fishing', 3], ['usv', 2]];
+    }
+    if (wave === 3) {
+      return [['drone', 3], ['bird', 2], ['airliner', 2], ['jet', 2], ['missile', 6],
+              ['fishing', 3], ['usv', 3], ['torpedo', 2]];
+    }
+    return [['drone', 2], ['bird', 2], ['airliner', 2], ['jet', 2], ['missile', 7],
+            ['fishing', 3], ['usv', 4], ['torpedo', 4]];
   }
   // From wave 3 a missile contact can arrive as a salvo on the same bearing.
   function salvoSize(wave) {
@@ -3733,13 +3887,20 @@
       this.weaveF = 0.35 + Math.random() * 0.7;
       this.climb = (Math.random() - 0.5) * 1.1;
       this.aimOff = (Math.random() < 0.5 ? -1 : 1) * (3 + Math.random() * 11);
-      this.bob = this.move === 'cross' ? 0.06 : 0.18 + Math.random() * 0.2;
+      this.bob = this.surface ? 0.05
+               : (this.move === 'cross' ? 0.06 : 0.18 + Math.random() * 0.2);
+      if (this.surface) {
+        this.climb = 0;                 // a boat does not gain altitude
+        this.weaveA *= 0.5;             // and it turns like a hull, not a drone
+      }
       this.spin = 24 + Math.random() * 10;
       this.baseY = this.el.object3D.position.y;
 
       this.hp = spec.hp || 1;
       this.maxHp = this.hp;
       this.pistolProof = !!spec.pistolProof;
+      this.rocketOnly = !!spec.rocketOnly;
+      this.surface = !!spec.surface;
       this.flash = 0;
       this.prev = this.el.object3D.position.clone();
       this.lastDist = null;
@@ -3764,7 +3925,7 @@
     damage: function (n, at) {
       if (!this.alive) { return 'immune'; }
       var game = this.el.sceneEl.components.game;
-      if (this.pistolProof) {
+      if (this.pistolProof || this.rocketOnly) {
         if (game) { game.ricochet(at || this.el.object3D.position); }
         return 'immune';
       }
@@ -3826,6 +3987,18 @@
           this.built.rotors[i].rotation.y += this.spin * s * (i % 2 ? -1 : 1);
         }
       }
+      /* A hull floats whatever the steering wanted. The movement code aims at
+         the player's eye height, which would fly a boat off the water, so the
+         waterline is imposed here — after the move, not before it. */
+      if (this.surface) {
+        this.baseY = 0;
+        var swell = Math.sin(time / 900 + this.phase) * 0.16
+                  + Math.sin(time / 520 + this.phase * 1.7) * 0.07;
+        o.position.y = 0.12 + swell;
+        o.rotation.z = Math.sin(time / 1100 + this.phase) * 0.055;   // heel
+        o.rotation.x = Math.sin(time / 760 + this.phase * 0.6) * 0.035; // pitch
+      }
+
       if (this.built.wings) {
         var f = Math.sin(this.phase) * 0.7;
         this.built.wings[0].rotation.z = -f;
@@ -4084,7 +4257,7 @@
   });
 
   /* --------------------------------------------------------------- game */
-  var ROCKET_SPARES = 3;      // issued on top of one per missile in the wave
+  var ROCKET_SPARES = 3;      // on top of one per contact only a rocket can kill
   var SHOTGUN_RANGE = 12;
   var SHOTGUN_DEG = 9;
   var BLAST_RADIUS = 5;
@@ -4477,7 +4650,8 @@
       }
       var res = hit.c.damage(1, hit.point);
       if (res === 'immune') {
-        this.say('Missile casing — pistol will not cut it');
+        this.say(hit.c.rocketOnly ? 'Hull — rockets only'
+                                  : 'Missile casing — pistol will not cut it');
         this.rumble(handEl, 0.5, 80);
         return;
       }
@@ -4635,6 +4809,13 @@
     destroy: function (el, how) {
       var c = el.components.target;
       if (!c || !c.alive) { return; }
+      if (c.rocketOnly && how !== 'rocket') {
+        var rp = new THREE.Vector3();
+        el.object3D.getWorldPosition(rp);
+        this.ricochet(rp);
+        this.say('Hull \u2014 rockets only');
+        return;
+      }
       c.alive = false;
       var p = new THREE.Vector3();
       el.object3D.getWorldPosition(p);
@@ -4790,15 +4971,19 @@
 
       this.queue = [];
       var missiles = 0, n = this.trickleCount();
+      var armoured = 0;
       for (var i = 0; i < n; i++) {
         var name = pickType(this.wave);
-        var salvo = name === 'missile' ? salvoSize(this.wave) : 1;
+        var salvo = (name === 'missile' || name === 'torpedo') ? salvoSize(this.wave) : 1;
         if (name === 'missile') { missiles += salvo; }
+        // everything a rocket is the only answer to has to be paid for
+        if (isRocketOnly(name) && TYPES[name].hostile) { armoured += salvo; }
         this.queue.push({ name: name, n: salvo });
       }
       this.trickleLeft = this.queue.length;
       this.waveMissiles = missiles;
-      this.rockets = missiles + ROCKET_SPARES;
+      this.waveArmoured = armoured;
+      this.rockets = missiles + armoured + ROCKET_SPARES;
     },
 
     /* Four outcomes that matter, and they are not 'did you hit it'.
@@ -5355,8 +5540,9 @@
         self.grabMouse();
         self.paused = false;
         self.running = true;
+        var need = self.waveMissiles + self.waveArmoured;
         self.say('Wave ' + self.wave + ' \u2014 ' + self.rockets + ' rockets for ' +
-                 self.waveMissiles + ' missile' + (self.waveMissiles === 1 ? '' : 's'));
+                 need + ' armoured contact' + (need === 1 ? '' : 's'));
       });
     },
 
@@ -5465,7 +5651,10 @@
       el.setAttribute('class', 'target');
 
       var r = 26 + Math.random() * 10 + (lag || 0);
-      var y = opts.y !== undefined ? opts.y : rng(spec.alt);
+      // surface contacts come from further out, because on the water you see
+      // them long before they matter
+      if (spec.surface) { r += 8 + Math.random() * 10; }
+      var y = opts.y !== undefined ? opts.y : (spec.surface ? 0 : rng(spec.alt));
       var pos = { x: Math.cos(a) * r, y: y, z: Math.sin(a) * r };
       el.setAttribute('position', pos);
       el.setAttribute('target', {
@@ -5500,7 +5689,10 @@
           if (!c) { return; }
           // How close the crossing path passes. Birds come in low and near so
           // they genuinely stray into shotgun range — that choice is the game.
-          var band = name === 'bird' ? [1.5, 9] : (name === 'airliner' ? [8, 26] : [5, 18]);
+          var band = name === 'bird' ? [1.5, 9]
+                   : name === 'airliner' ? [8, 26]
+                   : name === 'fishing' ? [9, 24]      // trawlers keep their distance
+                   : [5, 18];
           var off = (Math.random() < 0.5 ? -1 : 1) * (band[0] + Math.random() * (band[1] - band[0]));
           var perp = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)).multiplyScalar(off);
           var aim = new THREE.Vector3(self.target.x, y, self.target.z).add(perp);
@@ -5761,6 +5953,9 @@
     loadout: LOADOUT,
     advisor: ADVISOR,
     LO: LO,
+    types: TYPES,
+    cues: CUES,
+    cueValue: cueValue,
     roe: roeVerdict,
     quality: trackQuality,
     axes: ROE_AXES,
