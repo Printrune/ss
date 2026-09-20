@@ -1,9 +1,4 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Sentraspere</title>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>html,body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style><title>Sentraspere</title>
 
 <style>
   :root {
@@ -455,14 +450,6 @@
   }
 </style>
 
-<style>
- html,body{margin:0}
- img{max-width:100%}
- [hidden]{display:none!important}
- :root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-</style>
-</head>
-<body>
 <div id="stage">
   <a-scene
     embedded
@@ -1799,10 +1786,10 @@
      <audio> element so it also works from a local file, where WebAudio
      would be blocked from reading it.                                    */
   var Music = {
-    on: true, el: null, failed: false, vol: 0.22, timer: null,
+    on: true, el: null, failed: false, vol: 0.05, timer: null,
     SRC: 'music.mp3',
-    QUIET: 0.20,          // volume at rest
-    LOUD: 1.00,           // volume at maximum stress
+    QUIET: 0.05,          // barely there when you are calm
+    LOUD: 1.00,           // full when the pulse is up
 
     init: function () {
       if (this.el) { return; }
@@ -1819,9 +1806,21 @@
       this.el = a;
     },
 
+    /* With a strap on, the mix follows your pulse. Without one it follows the
+       situation instead — wave number and how much is in the air — so the
+       music still swells for anyone who has no heart monitor. */
+    tension: function () {
+      if (HR.live()) { return HR.stress(); }
+      var g = window.DroneRange && window.DroneRange.game && window.DroneRange.game();
+      if (!g || !g.running) { return 0.12; }
+      return Math.min(1, (g.wave - 1) * 0.15 + g.live.length * 0.075);
+    },
+
     target: function () {
-      var s = HR.live() ? HR.stress() : 0;
-      return this.QUIET + (this.LOUD - this.QUIET) * s;
+      var s = this.tension();
+      // eased, so it hangs low while things are calm and climbs steeply
+      var curve = s * s * (3 - 2 * s);
+      return this.QUIET + (this.LOUD - this.QUIET) * curve;
     },
 
     start: function () {
@@ -2193,7 +2192,6 @@
   }
 
   function iffSprite() { return spriteCanvas(256, 256); }
-  function dataSprite() { return spriteCanvas(360, 190); }
 
   /* Ring style still carries certainty, but the ring is now built from one
      arc per sensor. A lit arc means that source has returned something. */
@@ -2201,132 +2199,110 @@
     return pct < 30 ? 'WEAK' : (pct < 70 ? 'PARTIAL' : 'HELD');
   }
 
+  /* The ring frames the contact and never writes over it: no numbers in the
+     middle, and it scales with the aircraft so the airframe stays visible
+     inside it. Everything readable lives in a panel above. */
   function drawIff(sprite, c, dist, pct) {
     var u = sprite.userData;
     var lit = 0, i;
     for (i = 0; i < CUES.length; i++) { if (dist <= CUES[i].at) { lit++; } }
     var conflict = conflictVisible(c, dist);
-    var shown = Math.round(pct);
-    var stamp = lit + '|' + shown + '|' + (conflict ? 'X' : '-');
+    var stamp = lit + '|' + Math.round(pct / 5) + '|' + (conflict ? 'X' : '-');
     if (u.last === stamp) { return; }
     u.last = stamp;
 
-    var x = u.ctx, C = 128, R = 84;
+    var x = u.ctx, C = 128, R = 96;
     var rgb = iffRGB(pct);
     var col = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
     var band = trackBand(pct);
     x.clearRect(0, 0, 256, 256);
 
     var span = (Math.PI * 2) / CUES.length;
-    var gap = 0.16;
+    var gap = 0.2;
     for (i = 0; i < CUES.length; i++) {
       var on = dist <= CUES[i].at;
       var a0 = -Math.PI / 2 + i * span + gap / 2;
       var a1 = a0 + span - gap;
-
       var lying = on && c.liar === i && conflict;
+
       x.beginPath();
       x.arc(C, C, R, a0, a1);
       if (lying) {
-        // this source disagrees with the others
         x.strokeStyle = '#FFB020';
-        x.lineWidth = band === 'HELD' ? 11 : 9;
-        x.setLineDash([]);
+        x.lineWidth = 16; x.setLineDash([]);
         x.stroke();
-        x.beginPath();                    // ghosted double: unstable reading
-        x.arc(C, C + 4, R, a0, a1);
+        x.beginPath(); x.arc(C, C + 5, R, a0, a1);
         x.strokeStyle = 'rgba(255,176,32,0.45)';
-        x.lineWidth = 5;
-        x.stroke();
-        x.beginPath(); x.arc(C, C, R, a0, a1);
-        x.strokeStyle = 'rgba(255,176,32,0.001)';
+        x.lineWidth = 8; x.stroke();
       } else if (on) {
         x.strokeStyle = col;
-        x.lineWidth = band === 'HELD' ? 11 : 9;
+        x.lineWidth = band === 'HELD' ? 15 : 12;
         x.setLineDash([]);
+        x.stroke();
       } else {
-        x.strokeStyle = 'rgba(86,108,134,0.45)';
-        x.lineWidth = 4;
-        x.setLineDash([3, 7]);          // this source has nothing yet
+        x.strokeStyle = 'rgba(86,108,134,0.5)';
+        x.lineWidth = 6; x.setLineDash([5, 10]);
+        x.stroke();
       }
-      x.stroke();
       x.setLineDash([]);
-
-      // sensor tag just outside its own arc
-      var mid = (a0 + a1) / 2;
-      var lx = C + Math.cos(mid) * (R + 26);
-      var ly = C + Math.sin(mid) * (R + 26);
-      x.font = '800 26px "Saira", system-ui, sans-serif';
-      x.textAlign = 'center';
-      x.textBaseline = 'middle';
-      x.lineWidth = 7;
-      x.strokeStyle = 'rgba(6,9,14,0.95)';
-      x.strokeText(CUES[i].tag, lx, ly);
-      x.fillStyle = lying ? '#FFB020' : (on ? col : 'rgba(86,108,134,0.65)');
-      x.fillText(CUES[i].tag, lx, ly);
     }
-
-    var txt = shown + '%';
-    x.font = '800 68px "Saira", system-ui, sans-serif';
-    x.textAlign = 'center';
-    x.textBaseline = 'middle';
-    x.lineWidth = 11;
-    x.strokeStyle = 'rgba(6,9,14,0.95)';
-    x.strokeText(txt, C, C - 10);
-    x.fillStyle = col;
-    x.fillText(txt, C, C - 10);
-
-    x.font = '700 25px "Saira", system-ui, sans-serif';
-    x.lineWidth = 8;
-    x.strokeStyle = 'rgba(6,9,14,0.95)';
-    var sub = conflict ? 'SOURCES DISAGREE' : (band + ' \u00b7 ' + lit + '/' + CUES.length);
-    x.strokeText(sub, C, C + 36);
-    x.fillStyle = conflict ? '#FFB020' : 'rgba(170,190,212,0.95)';
-    x.fillText(sub, C, C + 36);
-
     u.tex.needsUpdate = true;
   }
 
-  /* Only the returns that have actually come in. Nothing is listed until a
-     sensor has something to say about it. */
-  function drawData(sprite, c, dist, pct) {
+  /* Everything you read sits here, above the contact, at a fixed apparent
+     size — so a contact at 45 m is as legible as one at 9 m. */
+  function panelSprite() { return spriteCanvas(420, 300); }
+
+  function drawPanel(sprite, c, dist, pct) {
     var u = sprite.userData;
     var got = [];
-    for (var i = 0; i < CUES.length; i++) {
-      if (dist <= CUES[i].at) { got.push(CUES[i]); }
-    }
-    var stamp = got.length + '|' + c.data.type + '|' + (conflictVisible(c, dist) ? 'X' : '-');
+    for (var i = 0; i < CUES.length; i++) { if (dist <= CUES[i].at) { got.push(CUES[i]); } }
+    var conflict = conflictVisible(c, dist);
+    var stamp = got.length + '|' + Math.round(pct) + '|' + c.data.type + (conflict ? 'X' : '-');
     if (u.last === stamp) { return; }
     u.last = stamp;
 
     var x = u.ctx, rgb = iffRGB(pct);
     var col = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
-    x.clearRect(0, 0, 360, 190);
+    var band = trackBand(pct);
+    x.clearRect(0, 0, 420, 300);
+
+    x.textAlign = 'center';
+    x.textBaseline = 'middle';
+
+    x.font = '800 74px "Saira", system-ui, sans-serif';
+    x.lineWidth = 12; x.strokeStyle = 'rgba(4,8,13,0.95)';
+    x.strokeText(Math.round(pct) + '%', 210, 40);
+    x.fillStyle = col;
+    x.fillText(Math.round(pct) + '%', 210, 40);
+
+    var sub = conflict ? 'SOURCES DISAGREE' : (band + ' \u00b7 ' + got.length + '/' + CUES.length);
+    x.font = '700 28px "Saira", system-ui, sans-serif';
+    x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
+    x.strokeText(sub, 210, 92);
+    x.fillStyle = conflict ? '#FFB020' : 'rgba(170,190,212,0.95)';
+    x.fillText(sub, 210, 92);
 
     if (!got.length) {
       x.font = '700 30px "Saira", system-ui, sans-serif';
-      x.textAlign = 'center'; x.textBaseline = 'middle';
-      x.lineWidth = 8; x.strokeStyle = 'rgba(6,9,14,0.95)';
-      x.strokeText('NO RETURNS', 180, 26);
+      x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
+      x.strokeText('NO RETURNS', 210, 140);
       x.fillStyle = 'rgba(120,146,174,0.95)';
-      x.fillText('NO RETURNS', 180, 26);
+      x.fillText('NO RETURNS', 210, 140);
       u.tex.needsUpdate = true;
       return;
     }
 
-    x.textAlign = 'center';
-    x.textBaseline = 'middle';
     for (i = 0; i < got.length; i++) {
-      var y = 20 + i * 35;
       var gi = CUES.indexOf(got[i]);
       var line = got[i].tag + '  ' + cueValue(got[i].key, c, gi);
-      var isLie = c.liar === gi && conflictVisible(c, dist);
-      x.font = '600 30px "IBM Plex Mono", ui-monospace, monospace';
-      x.lineWidth = 8;
-      x.strokeStyle = 'rgba(6,9,14,0.95)';
-      x.strokeText(line, 180, y);
+      var isLie = c.liar === gi && conflict;
+      var y = 138 + i * 33;
+      x.font = '600 29px "IBM Plex Mono", ui-monospace, monospace';
+      x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
+      x.strokeText(line, 210, y);
       x.fillStyle = isLie ? '#FFB020' : col;
-      x.fillText(line, 180, y);
+      x.fillText(line, 210, y);
     }
     u.tex.needsUpdate = true;
   }
@@ -2335,26 +2311,22 @@
      The classifier is only as good as the sensors feeding it. On radar alone
      it is barely better than a coin toss; once optical or the transponder
      have returned it is very good. Its STATED confidence never admits this —
-     it sounds equally sure either way. So the arcs, not the percentage, are
-     what tell you whether to believe it. */
+     it sounds equally sure either way. */
   var AI_TIER_SKILL = [0.52, 0.58, 0.82, 0.86, 0.97];   // RDR, RCS, EO, ACU, RF
 
-  /* The classifier learns from you. Every call you get right is a labelled
-     example; every one you get wrong poisons the set. As it trains, it really
-     does get better — but its STATED confidence climbs faster than its actual
-     accuracy, which is exactly how complacency sets in. A well-trained model
-     sounds certain long before it has earned the right to. */
+  /* It learns from you: every call you get right is a labelled example, every
+     wrong one poisons the set. It really does get better — but its stated
+     confidence climbs faster than its accuracy, which is how complacency
+     sets in. */
   var AI_TRAIN = {
-    level: 0,           // 0..1
+    level: 0,
     right: 0, wrong: 0,
     feed: function (playerWasRight) {
       this.level = Math.max(0, Math.min(1,
         this.level + (playerWasRight ? 0.07 : -0.10)));
       if (playerWasRight) { this.right++; } else { this.wrong++; }
     },
-    // real accuracy gain: meaningful, but it never reaches certainty
     skill: function (base) { return base + (1 - base) * 0.55 * this.level; },
-    // stated confidence gain: runs ahead of the real one
     swagger: function () { return Math.round(this.level * 14); }
   };
 
@@ -2364,18 +2336,16 @@
     if (dist <= 24) { return 2; }
     if (dist <= 32) { return 1; }
     if (dist <= 40) { return 0; }
-    return -1;                                  // nothing to go on yet
+    return -1;
   }
 
-  // stable pseudo-random so a verdict does not flicker frame to frame
   function aiHash(seed, tier, salt) {
     var x = Math.sin(seed * 127.1 + tier * 311.7 + (salt || 0) * 74.7) * 43758.5453;
     return x - Math.floor(x);
   }
 
-  /* The reason it gives is the honest part: it names the cue it leaned on.
-     On radar alone that reason is visibly thin, and when a sensor is lying
-     the classifier cites the lie — which is exactly how you catch it. */
+  /* The reason is the honest part: it names the cue it leaned on. When a
+     sensor is lying, it cites the lie — which is how you catch it. */
   function aiReason(tier, c, saysHostile, spoofed) {
     if (spoofed && c.liar >= 0) {
       return 'weighting ' + CUES[c.liar].tag + ' ' + cueValue(CUES[c.liar].key, c, c.liar);
@@ -2390,12 +2360,10 @@
   function aiVerdict(seed, tier, hostile, spoofed, c) {
     if (tier < 0) { return null; }
     var skill = AI_TRAIN.skill(AI_TIER_SKILL[tier]);
-    // Spoofing stays its blind spot however well trained it is — training on
-    // honest data teaches it nothing about a sensor that is lying.
+    // spoofing stays its blind spot however well trained it is
     if (spoofed) { skill = 0.22 + 0.18 * AI_TRAIN.level; }
     var right = aiHash(seed, tier, 1) < skill;
     var saysHostile = right ? hostile : !hostile;
-    // sounds just as sure when it is guessing as when it knows
     var stated = Math.min(99, 72 + Math.floor(aiHash(seed, tier, 2) * 23) + AI_TRAIN.swagger());
     return {
       hostile: saysHostile, stated: stated, tier: tier, right: right,
@@ -2417,7 +2385,6 @@
     if (!v) { u.tex.needsUpdate = true; return; }
 
     var AI = '#5FC8FF';
-    // diamond: an opinion exists
     x.fillStyle = AI;
     x.beginPath();
     x.moveTo(32, 48); x.lineTo(52, 68); x.lineTo(32, 88); x.lineTo(12, 68);
@@ -2444,7 +2411,6 @@
     x.fillStyle = 'rgba(95,200,255,0.85)';
     x.fillText(v.stated + '% confident', 62, 106);
 
-    // the reason it is leaning on — thin reasoning shows here
     x.font = '500 24px "IBM Plex Mono", ui-monospace, monospace';
     x.lineWidth = 7; x.strokeStyle = 'rgba(6,9,14,0.95)';
     x.strokeText(v.reason, 18, 142);
@@ -2460,7 +2426,6 @@
       x.fillStyle = '#38B6F0';
       x.fillText('DELEGATED — AI IS ENGAGING', 18, 180);
     }
-
     u.tex.needsUpdate = true;
   }
 
@@ -2675,7 +2640,7 @@
       this.alive = true;
 
       this.iff = iffSprite();
-      this.evid = dataSprite();          // NB: not this.data — A-Frame owns that
+      this.evid = panelSprite();         // NB: not this.data — A-Frame owns that
       this.dist = distSprite();
       this.aiTag = aiSprite();
       this.aiSeed = Math.random() * 1000;
@@ -2697,6 +2662,12 @@
 
       this.el.setObject3D('mesh', built.group);
       this.phase = Math.random() * Math.PI * 2;
+      // nothing flies a straight line at you: each contact weaves on its own
+      // period, drifts in altitude, and aims at an offset rather than at you
+      this.weaveA = 1.4 + Math.random() * 4.2;
+      this.weaveF = 0.35 + Math.random() * 0.7;
+      this.climb = (Math.random() - 0.5) * 1.1;
+      this.aimOff = (Math.random() < 0.5 ? -1 : 1) * (3 + Math.random() * 11);
       this.bob = this.move === 'cross' ? 0.06 : 0.18 + Math.random() * 0.2;
       this.spin = 24 + Math.random() * 10;
       this.baseY = this.el.object3D.position.y;
@@ -2749,16 +2720,36 @@
 
       if (this.move === 'home') {
         var t = game.target;
-        var dx = t.x - o.position.x, dz = t.z - o.position.z, dy = t.y - this.baseY;
+        // aim at a point offset from the player, closing that offset only as
+        // it gets near — so the approach is a curve, not a straight run-in
+        var dx0 = t.x - o.position.x, dz0 = t.z - o.position.z;
+        var flat0 = Math.sqrt(dx0 * dx0 + dz0 * dz0) || 1;
+        var offScale = Math.min(1, flat0 / 26);
+        var perpX = -dz0 / flat0, perpZ = dx0 / flat0;
+        var aimX = t.x + perpX * this.aimOff * offScale;
+        var aimZ = t.z + perpZ * this.aimOff * offScale;
+
+        var dx = aimX - o.position.x, dz = aimZ - o.position.z, dy = t.y - this.baseY;
         var len = Math.sqrt(dx * dx + dz * dz + dy * dy) || 1;
         var v = this.data.speed * s;
         o.position.x += (dx / len) * v;
         o.position.z += (dz / len) * v;
-        this.baseY += (dy / len) * v * 0.55;
+
+        // lateral weave across its own heading
+        var wob = Math.cos(this.phase * this.weaveF) * this.weaveA * s;
+        o.position.x += (-dz / len) * wob;
+        o.position.z += (dx / len) * wob;
+
+        this.baseY += (dy / len) * v * 0.4 + this.climb * s;
+        this.baseY = Math.max(1.2, Math.min(28, this.baseY));
         o.rotation.y = Math.atan2(dx, dz);
       } else {
         if (!this.dir) { this.setHeading(new THREE.Vector3(1, 0, 0)); }
         o.position.addScaledVector(this.dir, this.data.speed * s);
+        var pw = Math.cos(this.phase * this.weaveF * 0.6) * this.weaveA * 0.35 * s;
+        o.position.x += -this.dir.z * pw;
+        o.position.z += this.dir.x * pw;
+        this.baseY = Math.max(1.2, Math.min(30, this.baseY + this.climb * 0.5 * s));
         o.rotation.y = Math.atan2(this.dir.x, this.dir.z);
       }
 
@@ -2801,51 +2792,47 @@
         var dcx = o.position.x - cam.x, dcy = o.position.y - cam.y, dcz = o.position.z - cam.z;
         var dist = Math.sqrt(dcx * dcx + dcy * dcy + dcz * dcz);
         this.hud.rotation.y = -o.rotation.y;      // keep the readouts facing front
-        // Marker symbology is sized by RANGE, not by how big the aircraft is —
-        // otherwise an airliner's ring swallows the screen while a bird's vanishes.
-        // Constant angular size is how real HUD symbology behaves.
-        // Constant angular size, but noticeably larger — the readouts have to
-        // be legible on a contact at 45 m, not just one in your face.
-        var sz = Math.max(1.2, dist * 0.165);
-        this.iff.scale.set(sz, sz, 1);
 
-        // how much of the sensor picture is in — not what it is
+        /* Two scales. The RING hugs the airframe, so it frames the contact
+           and shrinks with distance like the aircraft does. The READOUTS are
+           held at a constant apparent size so they stay legible at any range.
+           Nothing is drawn over the contact itself. */
+        var ringSz = Math.max(this.radius * 2.6, dist * 0.028);
+        var uiSz   = Math.max(1.1, dist * 0.125);
+
         this.track = trackQuality(dist);
         drawIff(this.iff, this, dist, this.track);
-        // a contradicted track will not sit still
-        if (this.conflict) {
-          this.iff.position.set((Math.random() - 0.5) * sz * 0.045,
-                                (Math.random() - 0.5) * sz * 0.045, 0);
-        } else {
-          this.iff.position.set(0, 0, 0);
-        }
-        // weak tracks pulse; a solidly held one is rock steady
+        this.iff.scale.set(ringSz, ringSz, 1);
+        this.iff.position.set(0, 0, 0);
+
         var band = trackBand(this.track);
+        if (this.conflict) {
+          this.iff.position.set((Math.random() - 0.5) * ringSz * 0.06,
+                                (Math.random() - 0.5) * ringSz * 0.06, 0);
+        }
         if (band === 'WEAK') {
           this.iff.material.opacity = 0.62 + Math.sin(time / 320) * 0.26;
         } else if (band === 'PARTIAL') {
-          this.iff.material.opacity = 0.84 + Math.sin(time / 420) * 0.08;
+          this.iff.material.opacity = 0.86 + Math.sin(time / 420) * 0.08;
         } else {
-          this.iff.material.opacity = 0.96;
+          this.iff.material.opacity = 0.97;
         }
 
-        // returns stack directly under the ring, range under that
-        drawData(this.evid, this, dist, this.track);
-        this.evid.scale.set(sz * 1.2, sz * 0.633, 1);
-        this.evid.position.set(0, -sz * 0.82, 0);
-        this.evid.material.opacity = 0.95;
+        // readouts sit clear above the contact
+        drawPanel(this.evid, this, dist, this.track);
+        this.evid.scale.set(uiSz * 1.5, uiSz * 1.071, 1);
+        this.evid.position.set(0, ringSz * 0.6 + uiSz * 0.62, 0);
+        this.evid.material.opacity = 0.97;
 
-        // Range tag sits just under the bracket. Targets only spin about Y,
-        // so a purely vertical offset stays put as they turn.
-        var ds = sz * 0.52;
+        // range below it
+        var ds = uiSz * 0.5;
         this.dist.scale.set(ds * 2.2, ds * 0.82, 1);
-        this.dist.position.set(0, -sz * 1.32, 0);
+        this.dist.position.set(0, -(ringSz * 0.6 + uiSz * 0.30), 0);
+        drawDist(this.dist, Math.round(dist), dist <= stressRange() + this.radius);
 
-        // the AI's opinion sits beside the contact, never on it
+        // the classifier's opinion, off to one side
         var tier = aiTier(dist);
         this.conflict = conflictVisible(this, dist);
-        // beyond sensor range there is simply no opinion yet — guard the null,
-        // or this throws on every frame for every distant contact
         var bucket = Math.round(AI_TRAIN.level * 8);
         var needs = !this.ai ? tier >= 0
                   : (this.ai.tier !== tier || this.ai.spoofed !== this.conflict
@@ -2856,10 +2843,9 @@
         }
         if (tier < 0) { this.ai = null; }
         drawAI(this.aiTag, this.ai, this.delegated);
-        this.aiTag.scale.set(sz * 1.45, sz * 0.656, 1);
-        this.aiTag.position.set(sz * 1.15, sz * 0.66, 0);
-        this.aiTag.material.opacity = this.ai ? 0.96 : 0;
-        drawDist(this.dist, Math.round(dist), dist <= stressRange() + this.radius);
+        this.aiTag.scale.set(uiSz * 1.45, uiSz * 0.656, 1);
+        this.aiTag.position.set(ringSz * 0.6 + uiSz * 0.78, uiSz * 0.2, 0);
+        this.aiTag.material.opacity = this.ai ? 0.97 : 0;
 
         if (this.engine) {
           // radial velocity from how fast the range is actually closing
@@ -3055,9 +3041,12 @@
       this.rockets = ROCKETS_PER_WAVE;
       this.sinceSpawn = 0;
       this.elapsed = 0;
+      this.waveTime = 0;
+      this.WAVE_LEN = 60;               // ceiling per wave; clear it sooner and it ends
       this.live = [];
       this.log = [];                    // every resolved contact, for the debrief
       this.calib = 0;                   // points earned purely on judgement
+      this.armWave();
       this.paused = false;
       this.fx = [];
       this.rocks = [];
@@ -3562,7 +3551,7 @@
         this.kills++;
         HR.bump(-0.035);                  // a clean kill settles you
         this.rumble(null, 0.3, 60);
-        if (this.kills % 8 === 0) { this.nextWave(); }
+        // wave changes are on the clock now, not the body count
         this.paint();
       } else {
         this.civilian++;
@@ -3592,10 +3581,19 @@
 
     nextWave: function () {
       HR.bump(0.09);
+      this.waveTime = 0;
       this.wave++;
       this.rockets = ROCKETS_PER_WAVE;
+      this.armWave();
       sfx.wave();
       this.debrief();
+    },
+
+    armWave: function () {
+      this.swarmsLeft = this.swarmCount();
+      this.trickleLeft = this.trickleCount();
+      this.nextSwarmAt = 5;
+      this.sinceSpawn = 0;
     },
 
     /* Four outcomes that matter, and they are not 'did you hit it'.
@@ -3735,17 +3733,81 @@
     },
 
     /* --- spawning ------------------------------------------------------ */
+    /* Each wave runs a fixed minute and every wave is harder than the last:
+       contacts arrive faster, more of them stay in the air, and they move
+       quicker. Wave 1 stays deliberately sparse — it is for learning to read
+       the scope, not for volume. */
     spawnInterval: function () {
-      // wave 1 is for learning to read the scope, not for volume
-      if (this.wave <= 1) { return Math.max(2800, 4400 - this.elapsed * 40); }
-      return Math.max(620, 2100 - this.elapsed * 24);
+      if (this.wave <= 1) { return Math.max(2600, 4400 - this.waveTime * 30); }
+      var base = Math.max(760, 2200 - (this.wave - 2) * 250);
+      return Math.max(520, base - this.waveTime * 6);
     },
 
-    liveCap: function () { return this.wave <= 1 ? 3 : 12; },
+    liveCap: function () {
+      if (this.wave <= 1) { return 3; }
+      return Math.min(12, 3 + (this.wave - 1) * 2);
+    },
+
+    /* A wave is a budget, not an open tap: so many swarms and so many single
+       contacts. Spend the budget and clear the sky and the wave ends early —
+       which is the whole point. Shooting well buys you time. */
+    swarmCount:  function () { return this.wave; },
+    swarmSize:   function () { return Math.min(8, 3 + Math.floor(this.wave * 0.8)); },
+    trickleCount: function () { return this.wave <= 1 ? 3 : 3 + (this.wave - 1) * 3; },
+    HARD_CAP: 26,
+
+    /* Space the wave's swarms across the minute, tightening as waves climb,
+       but never so tight that the last one cannot be delivered before the
+       clock runs out. */
+    swarmGap: function () {
+      return Math.max(4, (this.WAVE_LEN * 0.80 - 5) / this.swarmCount());
+    },
+
+    spawnSwarm: function () {
+      if (this.live.length >= this.HARD_CAP) { return; }
+      var n = Math.min(this.swarmSize(), this.HARD_CAP - this.live.length);
+      var a = Math.random() * Math.PI * 2;
+      var speed = rng(TYPES.drone.speed);
+      var base = rng(TYPES.drone.alt);
+      var aimOff = (Math.random() < 0.5 ? -1 : 1) * (4 + Math.random() * 8);
+      var phase = Math.random() * Math.PI * 2;
+      for (var i = 0; i < n; i++) {
+        // loose wedge: fan in bearing, stagger in depth, stack in height
+        var row = Math.floor(i / 3);
+        var col = (i % 3) - 1;
+        this.spawnOne('drone', a + col * 0.10 + (Math.random() - 0.5) * 0.04,
+          row * 3.2 + Math.random() * 1.4,
+          { speed: speed * (0.97 + Math.random() * 0.06),
+            y: Math.max(1.4, base + col * 0.9 + row * 0.6),
+            tight: true, aimOff: aimOff, phase: phase });
+      }
+      this.swarmsLeft--;
+      this.nextSwarmAt = this.waveTime + this.swarmGap();
+      this.say('SWARM INBOUND \u00b7 ' + n + ' CONTACTS');
+      sfx.wave();
+    },
+
+    /* Hostiles hold the wave open. Birds and airliners do not — they are not
+       the threat, and making the player shoot them to advance would be the
+       exact wrong incentive. */
+    waveCleared: function () {
+      if (this.swarmsLeft > 0 || this.trickleLeft > 0) { return false; }
+      if (this.waveTime < 4) { return false; }
+      for (var i = 0; i < this.live.length; i++) {
+        var c = this.live[i].components.target;
+        if (!c || c.hostile === undefined) { return false; }  // still spawning in
+        if (c.alive && c.hostile) { return false; }
+      }
+      return true;
+    },
+
+    speedScale: function () { return 1 + Math.min(1.4, (this.wave - 1) * 0.16); },
 
     spawn: function () {
+      if (this.trickleLeft <= 0) { return; }
       var cap = this.liveCap();
       if (this.live.length >= cap) { return; }
+      this.trickleLeft--;
       var name = pickType(this.wave);
       var n = name === 'missile' ? salvoSize(this.wave) : 1;
       for (var i = 0; i < n && this.live.length < cap; i++) {
@@ -3755,22 +3817,39 @@
       if (n > 1) { this.say(n + ' missiles inbound'); }
     },
 
-    spawnOne: function (name, a, lag) {
+    spawnOne: function (name, a, lag, opts) {
       var spec = TYPES[name];
+      opts = opts || {};
       var el = document.createElement('a-entity');
       el.setAttribute('class', 'target');
 
       var r = 26 + Math.random() * 10 + (lag || 0);
-      var y = rng(spec.alt);
+      var y = opts.y !== undefined ? opts.y : rng(spec.alt);
       var pos = { x: Math.cos(a) * r, y: y, z: Math.sin(a) * r };
       el.setAttribute('position', pos);
       el.setAttribute('target', {
         type: name,
-        speed: rng(spec.speed) * (spec.move === 'home' ? 1 + Math.min(1.2, this.elapsed * 0.012) : 1),
+        speed: (opts.speed || rng(spec.speed)) * this.speedScale(),
         hostile: spec.hostile
       });
       this.el.appendChild(el);
       this.live.push(el);
+
+      /* A swarm has to read as one body moving together, so its members fly a
+         shared lane with only a little private wander. They still weave — just
+         not enough to scatter the formation. */
+      if (opts.tight) {
+        // deferred: the component's own init() has not run yet at this point,
+        // and it would overwrite anything set here with fresh randoms
+        setTimeout(function () {
+          var t = el.components && el.components.target;
+          if (!t) { return; }
+          t.weaveA *= 0.35;
+          t.climb *= 0.3;
+          t.aimOff = opts.aimOff;
+          t.phase = opts.phase + Math.random() * 0.4;
+        }, 0);
+      }
 
       if (spec.move === 'cross') {
         // aim the crossing path to pass near the player without hitting them
@@ -3852,7 +3931,7 @@
       if (this.elScore) { this.elScore.textContent = this.score; }
       if (this.elRock)  { this.elRock.textContent = this.rockets; }
       if (this.elCiv)   { this.elCiv.textContent = this.civilian; }
-      if (this.elWave)  { this.elWave.textContent = this.wave; }
+      // wave readout is driven by the clock in tick()
       if (this.elCalib) {
         this.elCalib.textContent = (this.calib > 0 ? '+' : '') + this.calib;
         this.calibDial.classList.toggle('neg', this.calib < 0);
@@ -3986,6 +4065,15 @@
       this.stepDelegated();
 
       this.elapsed += s;
+      this.waveTime += s;
+      if (this.swarmsLeft > 0 && this.waveTime >= this.nextSwarmAt) { this.spawnSwarm(); }
+      if (this.waveCleared()) { this.say('SECTOR CLEAR'); this.nextWave(); }
+      else if (this.waveTime >= this.WAVE_LEN) { this.nextWave(); }
+      if (this.elWave) {
+        var left = Math.max(0, Math.ceil(this.WAVE_LEN - this.waveTime));
+        this.elWave.textContent = this.wave + ' \u00b7 ' +
+          Math.floor(left / 60) + ':' + ('0' + (left % 60)).slice(-2);
+      }
       var cam = this.el.camera;
       if (cam) {
         cam.getWorldPosition(this.target);
@@ -4038,6 +4126,4 @@
   }
 })();
 </script>
-
-</body>
-</html>
+</body></html>
