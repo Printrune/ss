@@ -211,6 +211,17 @@
     color: #DCE6F2;
   }
   .hostile { color: var(--alarm); font-weight: 600; }
+  #viewchips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+               margin-top: 6px; font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+  #micstate { font-size: 11px; letter-spacing: .08em; color: var(--steel);
+              border: 1px solid rgba(120,146,174,.35); border-radius: 3px;
+              padding: 3px 7px; }
+  #micstate.live { color: #0b1016; background: var(--amber);
+                   border-color: var(--amber); font-weight: 700; }
+  #viewnow { font-size: 11px; letter-spacing: .06em; color: var(--steel); }
+  #heardline { font-size: 11px; color: var(--amber); opacity: .9;
+               max-width: 46ch; overflow: hidden; text-overflow: ellipsis;
+               white-space: nowrap; }
   .friend  { color: var(--friend); font-weight: 600; }
 
   .go {
@@ -526,7 +537,14 @@
       <button class="gun on" id="musBtn" type="button">Music</button>
       <span id="hrNote"></span>
     </div>
-    <div id="lockhint"><b id="relock">Click the view</b> to capture the mouse and look 360&deg;. Press <b>Esc</b> to free it. Weapon keys <b>1</b> / <b>2</b> / <b>Q</b> work either way.</div>
+    <div id="viewchips">
+      <button class="gun" id="voiceBtn" type="button">Enable voice</button>
+      <span id="micstate">HOLD V</span>
+      <button class="gun" id="viewBtn" type="button">Display: FULL</button>
+      <span id="viewnow"></span>
+      <span id="heardline"></span>
+    </div>
+    <div id="lockhint"><b id="relock">Click the view</b> to capture the mouse and look 360&deg;. Press <b>Esc</b> to free it. Weapon keys <b>1</b> / <b>2</b> / <b>Q</b> work either way. Hold <b>V</b> to talk, <b>F</b> cycles the display.</div>
   </div>
 </div>
 
@@ -2110,6 +2128,71 @@
   ];
   var CUE_TOTAL = CUES.reduce(function (a, c) { return a + c.w; }, 0);
 
+  /* ------------------------------------------------------- what is displayed
+     The operator decides how much of the picture they want on screen. Every
+     readout is a field that can be turned on or off independently, by voice
+     or by hand. This is the point, not a convenience: information density is
+     itself a decision, and a cluttered scope and an empty one fail in
+     opposite directions. VIEW.rev bumps on every change so the cached sprite
+     stamps know to redraw. */
+  var FIELDS = [
+    { key: 'ring',   name: 'sensor ring',  say: 'sensor ring' },
+    { key: 'pct',    name: 'confidence',   say: 'track confidence' },
+    { key: 'band',   name: 'track status', say: 'track status' },
+    { key: 'range',  name: 'range',        say: 'range' },
+    { key: 'ai',     name: 'AI opinion',   say: 'the classifier opinion' },
+    { key: 'speed',  name: 'speed',        say: 'speed' },
+    { key: 'size',   name: 'size',         say: 'return size' },
+    { key: 'profile',name: 'profile',      say: 'optical profile' },
+    { key: 'emissn', name: 'emission',     say: 'acoustic emission' },
+    { key: 'xpdr',   name: 'transponder',  say: 'the transponder' },
+    { key: 'arrow',  name: 'nearest arrow',say: 'the nearest contact arrow' }
+  ];
+  var CUE_FIELD = { SPEED: 'speed', SIZE: 'size', PROFILE: 'profile',
+                    EMISSN: 'emissn', XPDR: 'xpdr' };
+
+  var VIEW = {
+    rev: 0,
+    on: {},
+    set: function (key, val) {
+      if (this.on[key] === val) { return false; }
+      this.on[key] = val; this.rev++; return true;
+    },
+    all: function (val) {
+      for (var i = 0; i < FIELDS.length; i++) { this.on[FIELDS[i].key] = val; }
+      this.rev++;
+    },
+    only: function (keys) {
+      this.all(false);
+      for (var i = 0; i < keys.length; i++) { this.on[keys[i]] = true; }
+      this.rev++;
+    },
+    shown: function () {
+      var out = [];
+      for (var i = 0; i < FIELDS.length; i++) {
+        if (this.on[FIELDS[i].key]) { out.push(FIELDS[i]); }
+      }
+      return out;
+    }
+  };
+
+  /* Four rungs from everything to nothing, so one button can walk the whole
+     range when voice is not available. */
+  var PRESETS = [
+    { name: 'FULL',     keys: null },
+    { name: 'STANDARD', keys: ['ring', 'pct', 'range', 'ai', 'arrow'] },
+    { name: 'MINIMAL',  keys: ['ring', 'range', 'arrow'] },
+    { name: 'CLEAN',    keys: [] }
+  ];
+  VIEW.preset = 0;
+  VIEW.applyPreset = function (i) {
+    this.preset = ((i % PRESETS.length) + PRESETS.length) % PRESETS.length;
+    var pr = PRESETS[this.preset];
+    if (pr.keys === null) { this.all(true); } else { this.only(pr.keys); }
+    return pr.name;
+  };
+  VIEW.all(true);
+
   var SIGNATURE = {
     drone:    { profile: 'QUADROTOR', emissn: 'ELECTRIC',  xpdr: 'NONE' },
     missile:  { profile: 'CRUISE',    emissn: 'ROCKET',    xpdr: 'NONE' },
@@ -2256,9 +2339,16 @@
   function drawPanel(sprite, c, dist, pct) {
     var u = sprite.userData;
     var got = [];
-    for (var i = 0; i < CUES.length; i++) { if (dist <= CUES[i].at) { got.push(CUES[i]); } }
+    for (var i = 0; i < CUES.length; i++) {
+      if (dist <= CUES[i].at && VIEW.on[CUE_FIELD[CUES[i].key]]) { got.push(CUES[i]); }
+    }
+    var anyCue = false;
+    for (i = 0; i < CUES.length; i++) {
+      if (dist <= CUES[i].at) { anyCue = true; break; }
+    }
     var conflict = conflictVisible(c, dist);
-    var stamp = got.length + '|' + Math.round(pct) + '|' + c.data.type + (conflict ? 'X' : '-');
+    var stamp = got.length + '|' + Math.round(pct) + '|' + c.data.type +
+                (conflict ? 'X' : '-') + '|' + VIEW.rev;
     if (u.last === stamp) { return; }
     u.last = stamp;
 
@@ -2270,25 +2360,44 @@
     x.textAlign = 'center';
     x.textBaseline = 'middle';
 
-    x.font = '800 74px "Saira", system-ui, sans-serif';
-    x.lineWidth = 12; x.strokeStyle = 'rgba(4,8,13,0.95)';
-    x.strokeText(Math.round(pct) + '%', 210, 40);
-    x.fillStyle = col;
-    x.fillText(Math.round(pct) + '%', 210, 40);
+    // the panel packs upward, so hiding a field closes the gap it left
+    var y = 40;
+    if (VIEW.on.pct) {
+      x.font = '800 74px "Saira", system-ui, sans-serif';
+      x.lineWidth = 12; x.strokeStyle = 'rgba(4,8,13,0.95)';
+      x.strokeText(Math.round(pct) + '%', 210, y);
+      x.fillStyle = col;
+      x.fillText(Math.round(pct) + '%', 210, y);
+      y += 52;
+    }
 
-    var sub = conflict ? 'SOURCES DISAGREE' : (band + ' \u00b7 ' + got.length + '/' + CUES.length);
-    x.font = '700 28px "Saira", system-ui, sans-serif';
-    x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
-    x.strokeText(sub, 210, 92);
-    x.fillStyle = conflict ? '#FFB020' : 'rgba(170,190,212,0.95)';
-    x.fillText(sub, 210, 92);
+    if (VIEW.on.band) {
+      var sub = conflict ? 'SOURCES DISAGREE' : (band + ' \u00b7 ' + got.length + '/' + CUES.length);
+      x.font = '700 28px "Saira", system-ui, sans-serif';
+      x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
+      x.strokeText(sub, 210, y);
+      x.fillStyle = conflict ? '#FFB020' : 'rgba(170,190,212,0.95)';
+      x.fillText(sub, 210, y);
+      y += 46;
+    } else if (conflict && got.length) {
+      // never let the operator hide the one thing that means they are being lied to
+      x.font = '700 28px "Saira", system-ui, sans-serif';
+      x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
+      x.strokeText('SOURCES DISAGREE', 210, y);
+      x.fillStyle = '#FFB020';
+      x.fillText('SOURCES DISAGREE', 210, y);
+      y += 46;
+    }
 
     if (!got.length) {
-      x.font = '700 30px "Saira", system-ui, sans-serif';
-      x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
-      x.strokeText('NO RETURNS', 210, 140);
-      x.fillStyle = 'rgba(120,146,174,0.95)';
-      x.fillText('NO RETURNS', 210, 140);
+      if (VIEW.on.pct || VIEW.on.band) {
+        var msg = anyCue ? 'RETURNS HIDDEN' : 'NO RETURNS';
+        x.font = '700 30px "Saira", system-ui, sans-serif';
+        x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
+        x.strokeText(msg, 210, y);
+        x.fillStyle = 'rgba(120,146,174,0.95)';
+        x.fillText(msg, 210, y);
+      }
       u.tex.needsUpdate = true;
       return;
     }
@@ -2297,12 +2406,12 @@
       var gi = CUES.indexOf(got[i]);
       var line = got[i].tag + '  ' + cueValue(got[i].key, c, gi);
       var isLie = c.liar === gi && conflict;
-      var y = 138 + i * 33;
       x.font = '600 29px "IBM Plex Mono", ui-monospace, monospace';
       x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
       x.strokeText(line, 210, y);
       x.fillStyle = isLie ? '#FFB020' : col;
       x.fillText(line, 210, y);
+      y += 33;
     }
     u.tex.needsUpdate = true;
   }
@@ -2369,6 +2478,417 @@
       hostile: saysHostile, stated: stated, tier: tier, right: right,
       reason: c ? aiReason(tier, c, saysHostile, spoofed) : ''
     };
+  }
+
+  /* ------------------------------------------------- nearest-contact arrow
+     A pointer that rides in front of the camera and rotates in screen space
+     to show which way the closest contact lies. It hides itself once that
+     contact is inside your field of view, because at that point the arrow is
+     just clutter over the thing it was pointing at. */
+  /* ================================================================ VOICE
+     Three separable pieces, deliberately: EARS turn speech into text, BRAIN
+     turns text into an intent, and apply() carries the intent out. Only BRAIN
+     needs replacing to move from the local vocabulary to a real model — set
+     BRAIN.endpoint to a proxy that returns the same intent JSON and nothing
+     else in this file changes. The key cannot live in this page, so that
+     proxy has to exist before BRAIN.endpoint means anything. */
+
+  var WORDS = {
+    range:  ['range', 'distance', 'how far', 'far away', 'metres', 'meters'],
+    pct:    ['confidence', 'certainty', 'percent', 'percentage', 'track quality',
+             'quality', 'how sure', 'probability'],
+    band:   ['status', 'track status', 'band', 'strength', 'held', 'returns'],
+    ring:   ['ring', 'rings', 'arc', 'arcs', 'marker', 'markers', 'circle', 'circles'],
+    ai:     ['ai', 'a i', 'opinion', 'classifier', 'assessment', 'machine',
+             'computer', 'the model', 'recommendation'],
+    speed:  ['speed', 'velocity', 'radar', 'how fast'],
+    size:   ['size', 'return size', 'rcs', 'how big', 'radar cross section'],
+    profile:['profile', 'optical', 'shape', 'camera', 'e o', 'electro optical'],
+    emissn: ['emission', 'emissions', 'acoustic', 'sound', 'engine', 'audio', 'noise'],
+    xpdr:   ['transponder', 'squawk', 'iff', 'friendly', 'friendlies', 'civilian',
+             'ally', 'allies', 'allied', 'identification', 'confirmed friendly'],
+    arrow:  ['arrow', 'pointer', 'nearest', 'closest', 'compass', 'direction']
+  };
+
+  var SHOW_V = ['show', 'display', 'give', 'add', 'turn on', 'switch on', 'enable',
+                'put up', 'bring up', 'i want', 'let me see', 'reveal', 'more'];
+  var HIDE_V = ['hide', 'remove', 'drop', 'turn off', 'switch off', 'disable',
+                'get rid of', 'take off', 'take away', 'lose', 'kill', 'without',
+                'no more', 'stop showing', 'less'];
+
+  function normalise(t) {
+    return (' ' + String(t || '').toLowerCase() + ' ')
+      .replace(/[^a-z0-9 ]+/g, ' ')
+      .replace(/\s+/g, ' ');
+  }
+
+  function fieldsIn(t) {
+    var hits = [], seen = {};
+    for (var k in WORDS) {
+      if (!WORDS.hasOwnProperty(k)) { continue; }
+      for (var i = 0; i < WORDS[k].length; i++) {
+        if (t.indexOf(' ' + WORDS[k][i] + ' ') !== -1 && !seen[k]) {
+          seen[k] = true; hits.push(k);
+        }
+      }
+    }
+    return hits;
+  }
+
+  function anyOf(t, list) {
+    for (var i = 0; i < list.length; i++) {
+      if (t.indexOf(' ' + list[i] + ' ') !== -1) { return list[i]; }
+    }
+    return null;
+  }
+
+  /* The local vocabulary. It is narrow on purpose: it either understands you
+     or says so, and it never needs a network. */
+  function localGrammar(text) {
+    var t = normalise(text);
+    if (!t.trim()) { return { action: 'unknown' }; }
+
+    if (anyOf(t, ['what can i say', 'help', 'commands', 'what can you do'])) {
+      return { action: 'help' };
+    }
+    if (anyOf(t, ['read', 'read out', 'what is that', 'whats that', 'tell me',
+                  'report', 'call it', 'sitrep'])) {
+      return { action: 'read' };
+    }
+
+    var fields = fieldsIn(t);
+    var everything = anyOf(t, ['everything', 'all of it', 'all data', 'full',
+                               'maximum', 'all the data', 'all']);
+    var nothing = anyOf(t, ['nothing', 'clean', 'clear it', 'declutter',
+                            'clear the screen', 'empty', 'bare']);
+    var minimal = anyOf(t, ['minimal', 'minimum', 'bare minimum', 'just the basics',
+                            'keep it simple', 'simple']);
+    var onlyWord = anyOf(t, ['only', 'just', 'nothing but', 'purely']);
+    var hideV = anyOf(t, HIDE_V);
+    var showV = anyOf(t, SHOW_V);
+
+    if (nothing && !fields.length) { return { action: 'preset', preset: 'CLEAN' }; }
+    if (minimal && !fields.length) { return { action: 'preset', preset: 'MINIMAL' }; }
+    if (everything && !fields.length) { return { action: 'preset', preset: 'FULL' }; }
+
+    // "everything except size" — show all, then subtract
+    var except = anyOf(t, ['except', 'apart from', 'other than', 'but not', 'besides']);
+    if (everything && except && fields.length) {
+      return { action: 'allBut', fields: fields };
+    }
+    if (!fields.length) { return { action: 'unknown' }; }
+    if (onlyWord) { return { action: 'only', fields: fields }; }
+    if (hideV && !showV) { return { action: 'hide', fields: fields }; }
+    return { action: 'show', fields: fields };
+  }
+
+  var BRAIN = {
+    /* Point this at your own proxy to swap the vocabulary for a real model.
+       It must return the same shape localGrammar does. The proxy holds the
+       API key; this page never can, because anyone can read it. */
+    endpoint: null,
+    timeout: 3500,
+
+    interpret: function (text) {
+      var self = this;
+      if (!this.endpoint) { return Promise.resolve(localGrammar(text)); }
+      return this.remote(text)['catch'](function () {
+        // the model is an upgrade, never a dependency: fall back and carry on
+        return localGrammar(text);
+      });
+    },
+
+    remote: function (text) {
+      var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      var to = setTimeout(function () { if (ctl) { ctl.abort(); } }, this.timeout);
+      return fetch(this.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text, fields: FIELDS.map(function (f) { return f.key; }) }),
+        signal: ctl ? ctl.signal : undefined
+      }).then(function (r) {
+        clearTimeout(to);
+        if (!r.ok) { throw new Error('proxy ' + r.status); }
+        return r.json();
+      }).then(function (j) {
+        if (!j || !j.action) { throw new Error('bad intent'); }
+        return j;
+      });
+    }
+  };
+
+  /* ---- EARS ------------------------------------------------------------
+     Speech recognition is unofficial, webkit-prefixed and not guaranteed on
+     a headset browser. Worse, there is a known failure where the constructor
+     exists but no event ever fires — so presence is not proof, and a
+     watchdog has to decide. Everything voice can do, a key can also do. */
+  var EARS = {
+    rec: null, on: false, ready: false, dead: false, armed: false,
+    Ctor: (typeof window !== 'undefined' &&
+           (window.SpeechRecognition || window.webkitSpeechRecognition)) || null,
+
+    can: function () { return !!this.Ctor && !this.dead; },
+
+    /* Called from a click, before VR: the permission prompt cannot be
+       answered from inside an immersive session, so it has to happen here. */
+    arm: function (cb) {
+      if (!this.can()) { if (cb) { cb(false); } return; }
+      var self = this;
+      try {
+        var r = new this.Ctor();
+        r.lang = 'en-US';
+        r.continuous = false;
+        r.interimResults = false;
+        r.maxAlternatives = 3;
+
+        r.onstart = function () { self.ready = true; self.on = true; VOICE.paint(); };
+        r.onaudiostart = function () { self.ready = true; };
+        r.onend = function () { self.on = false; VOICE.paint(); };
+        r.onerror = function (e) {
+          self.on = false;
+          if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed')) {
+            self.dead = true;
+            VOICE.note('Microphone blocked \u2014 use the keys');
+          } else if (e && e.error === 'no-speech') {
+            VOICE.note('Heard nothing');
+          }
+          VOICE.paint();
+        };
+        r.onresult = function (e) {
+          var best = '';
+          for (var i = 0; i < e.results.length; i++) {
+            if (e.results[i][0]) { best += ' ' + e.results[i][0].transcript; }
+          }
+          VOICE.heard(best.trim(), e.results[0] && e.results[0]);
+        };
+        this.rec = r;
+        this.armed = true;
+        if (cb) { cb(true); }
+      } catch (err) {
+        this.dead = true;
+        if (cb) { cb(false); }
+      }
+    },
+
+    start: function () {
+      if (!this.can()) { return false; }
+      if (!this.armed) { this.arm(); }
+      if (!this.rec || this.on) { return false; }
+      try { this.rec.start(); } catch (e) { return false; }
+      var self = this;
+      // the silent-failure guard: no start event inside 2.5s means it is a
+      // constructor that does nothing, so stop pretending voice works
+      clearTimeout(this._wd);
+      this._wd = setTimeout(function () {
+        if (!self.ready) {
+          self.dead = true;
+          VOICE.note('Voice not supported here \u2014 use the keys');
+          VOICE.paint();
+        }
+      }, 2500);
+      return true;
+    },
+
+    stop: function () {
+      if (this.rec && this.on) { try { this.rec.stop(); } catch (e) {} }
+    }
+  };
+
+  /* ---- MOUTH ---------------------------------------------------------- */
+  var MOUTH = {
+    ok: typeof window !== 'undefined' && !!window.speechSynthesis,
+    enabled: true,
+    say: function (text) {
+      if (!this.ok || !this.enabled || !text) { return; }
+      try {
+        window.speechSynthesis.cancel();   // never queue up a backlog
+        var u = new SpeechSynthesisUtterance(text);
+        u.rate = 1.08; u.pitch = 0.95; u.volume = 0.9;
+        window.speechSynthesis.speak(u);
+      } catch (e) {}
+    }
+  };
+
+  /* ---- the thing that ties them together ------------------------------- */
+  var VOICE = {
+    last: '',
+
+    game: function () {
+      var sc = document.querySelector('a-scene');
+      return sc && sc.components ? sc.components.game : null;
+    },
+
+    note: function (msg) {
+      this.last = msg;
+      var g = this.game();
+      if (g && g.say) { g.say(msg); }
+      this.paint();
+    },
+
+    heard: function (text) {
+      if (!text) { return; }
+      this.note('\u201c' + text + '\u201d');
+      var self = this;
+      BRAIN.interpret(text).then(function (intent) { self.apply(intent, text); });
+    },
+
+    nameOf: function (key) {
+      for (var i = 0; i < FIELDS.length; i++) {
+        if (FIELDS[i].key === key) { return FIELDS[i].say; }
+      }
+      return key;
+    },
+
+    list: function (keys) {
+      var names = keys.map(this.nameOf, this);
+      if (names.length === 1) { return names[0]; }
+      return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+    },
+
+    apply: function (intent, said) {
+      if (!intent) { intent = { action: 'unknown' }; }
+      var msg;
+
+      if (intent.action === 'show' || intent.action === 'hide') {
+        var want = intent.action === 'show';
+        VIEW.preset = -1;
+        for (var i = 0; i < intent.fields.length; i++) { VIEW.set(intent.fields[i], want); }
+        msg = (want ? 'Showing ' : 'Hiding ') + this.list(intent.fields);
+
+      } else if (intent.action === 'only') {
+        VIEW.preset = -1;
+        VIEW.only(intent.fields);
+        msg = 'Showing ' + this.list(intent.fields) + ' only';
+
+      } else if (intent.action === 'allBut') {
+        VIEW.preset = -1;
+        VIEW.all(true);
+        for (i = 0; i < intent.fields.length; i++) { VIEW.set(intent.fields[i], false); }
+        msg = 'Everything except ' + this.list(intent.fields);
+
+      } else if (intent.action === 'preset') {
+        var idx = 0;
+        for (i = 0; i < PRESETS.length; i++) {
+          if (PRESETS[i].name === intent.preset) { idx = i; }
+        }
+        msg = VIEW.applyPreset(idx) + ' display';
+
+      } else if (intent.action === 'read') {
+        msg = this.readNearest();
+
+      } else if (intent.action === 'help') {
+        msg = 'Say show or hide, then range, confidence, size, speed, profile, ' +
+              'emission, transponder, the ring, the arrow or the A I. ' +
+              'Or say everything, minimal, or clean.';
+
+      } else {
+        msg = said ? 'Did not catch that' : 'Say again';
+      }
+
+      this.note(msg);
+      MOUTH.say(msg);
+      return msg;
+    },
+
+    /* Spoken readout of the closest contact, so the operator can keep their
+       eyes on the sky instead of on a panel. */
+    readNearest: function () {
+      var g = this.game();
+      if (!g || !g.live || !g.live.length) { return 'Sky is clear'; }
+      var best = null, bestD = Infinity, p = new THREE.Vector3();
+      for (var i = 0; i < g.live.length; i++) {
+        var c = g.live[i].components.target;
+        if (!c || !c.alive) { continue; }
+        g.live[i].object3D.getWorldPosition(p);
+        var d = p.distanceTo(g.target);
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      if (!best) { return 'Sky is clear'; }
+
+      var dist = bestD;
+      var parts = ['Nearest contact ' + Math.round(dist) + ' metres'];
+      var q = Math.round(trackQuality(dist));
+      parts.push(q + ' percent resolved');
+      for (i = 0; i < CUES.length; i++) {
+        if (dist <= CUES[i].at) {
+          parts.push(CUES[i].label + ' ' + cueValue(CUES[i].key, best, i));
+        }
+      }
+      if (conflictVisible(best, dist)) { parts.push('sources disagree'); }
+      if (best.ai) {
+        parts.push('classifier says ' + (best.ai.hostile ? 'hostile' : 'friendly') +
+                   ' at ' + best.ai.stated + ' percent');
+      }
+      return parts.join(', ');
+    },
+
+    paint: function () {
+      var row = document.getElementById('viewchips');
+      if (!row) { return; }
+      var on = VIEW.shown().map(function (f) { return f.name; });
+      var txt = on.length ? on.join(' \u00b7 ') : 'nothing';
+      var lbl = document.getElementById('viewnow');
+      if (lbl) { lbl.textContent = txt.toUpperCase(); }
+      var pb = document.getElementById('viewBtn');
+      if (pb) {
+        pb.textContent = 'Display: ' +
+          (VIEW.preset >= 0 ? PRESETS[VIEW.preset].name : 'CUSTOM');
+      }
+      var mic = document.getElementById('micstate');
+      if (mic) {
+        mic.textContent = !EARS.can() ? 'VOICE N/A'
+                        : (EARS.on ? 'LISTENING\u2026' : 'HOLD V');
+        mic.classList.toggle('live', EARS.on);
+      }
+      var heard = document.getElementById('heardline');
+      if (heard) { heard.textContent = this.last || ''; }
+    }
+  };
+
+  function arrowSprite() { return spriteCanvas(320, 320); }
+
+  function drawArrowGlyph(sprite) {
+    var u = sprite.userData;
+    if (u.last === 'a') { return; }
+    u.last = 'a';
+    var x = u.ctx;
+    x.clearRect(0, 0, 320, 320);
+    x.translate(160, 160);
+    x.beginPath();
+    x.moveTo(0, -104);
+    x.lineTo(56, -26);
+    x.lineTo(21, -26);
+    x.lineTo(21, 62);
+    x.lineTo(-21, 62);
+    x.lineTo(-21, -26);
+    x.lineTo(-56, -26);
+    x.closePath();
+    x.fillStyle = 'rgba(8,14,22,0.72)';
+    x.fill();
+    x.lineWidth = 9;
+    x.strokeStyle = '#FFB020';
+    x.stroke();
+    x.setTransform(1, 0, 0, 1, 0, 0);
+    u.tex.needsUpdate = true;
+  }
+
+  function arrowLabelSprite() { return spriteCanvas(320, 110); }
+
+  function drawArrowLabel(sprite, metres) {
+    var u = sprite.userData;
+    var stamp = String(Math.round(metres));
+    if (u.last === stamp) { return; }
+    u.last = stamp;
+    var x = u.ctx;
+    x.clearRect(0, 0, 320, 110);
+    x.textAlign = 'center';
+    x.textBaseline = 'middle';
+    x.font = '700 40px "Saira", system-ui, sans-serif';
+    x.lineWidth = 11; x.strokeStyle = 'rgba(4,8,13,0.95)';
+    x.strokeText('NEAREST ' + Math.round(metres) + 'm', 160, 58);
+    x.fillStyle = '#FFB020';
+    x.fillText('NEAREST ' + Math.round(metres) + 'm', 160, 58);
+    u.tex.needsUpdate = true;
   }
 
   function aiSprite() { return spriteCanvas(420, 190); }
@@ -2801,6 +3321,12 @@
         var uiSz   = Math.max(1.1, dist * 0.125);
 
         this.track = trackQuality(dist);
+        // each readout answers to its own switch
+        this.iff.visible = !!VIEW.on.ring;
+        this.dist.visible = !!VIEW.on.range;
+        var panelOn = VIEW.on.pct || VIEW.on.band || VIEW.on.speed || VIEW.on.size ||
+                      VIEW.on.profile || VIEW.on.emissn || VIEW.on.xpdr;
+        this.evid.visible = !!panelOn;
         drawIff(this.iff, this, dist, this.track);
         this.iff.scale.set(ringSz, ringSz, 1);
         this.iff.position.set(0, 0, 0);
@@ -2819,15 +3345,16 @@
         }
 
         // readouts sit clear above the contact
+        var anchor = VIEW.on.ring ? ringSz * 0.6 : this.radius * 1.1;
         drawPanel(this.evid, this, dist, this.track);
         this.evid.scale.set(uiSz * 1.5, uiSz * 1.071, 1);
-        this.evid.position.set(0, ringSz * 0.6 + uiSz * 0.62, 0);
+        this.evid.position.set(0, anchor + uiSz * 0.62, 0);
         this.evid.material.opacity = 0.97;
 
         // range below it
         var ds = uiSz * 0.5;
         this.dist.scale.set(ds * 2.2, ds * 0.82, 1);
-        this.dist.position.set(0, -(ringSz * 0.6 + uiSz * 0.30), 0);
+        this.dist.position.set(0, -(anchor + uiSz * 0.30), 0);
         drawDist(this.dist, Math.round(dist), dist <= stressRange() + this.radius);
 
         // the classifier's opinion, off to one side
@@ -2844,7 +3371,8 @@
         if (tier < 0) { this.ai = null; }
         drawAI(this.aiTag, this.ai, this.delegated);
         this.aiTag.scale.set(uiSz * 1.45, uiSz * 0.656, 1);
-        this.aiTag.position.set(ringSz * 0.6 + uiSz * 0.78, uiSz * 0.2, 0);
+        this.aiTag.position.set(anchor + uiSz * 0.78, uiSz * 0.2, 0);
+        this.aiTag.visible = !!VIEW.on.ai;
         this.aiTag.material.opacity = this.ai ? 0.97 : 0;
 
         if (this.engine) {
@@ -2934,6 +3462,13 @@
       ['abuttondown', 'xbuttondown', 'bbuttondown', 'ybuttondown'].forEach(function (e) {
         self.el.addEventListener(e, function () { self.swap(); });
       });
+      ['thumbstickdown', 'trackpaddown'].forEach(function (e) {
+        self.el.addEventListener(e, function () {
+          var game = self.el.sceneEl.components.game;
+          if (game) { game.cycleView(); }
+        });
+      });
+
       this.el.addEventListener('gripdown', function () {
         var game = self.el.sceneEl.components.game;
         if (!game) { return; }
@@ -3200,7 +3735,42 @@
           var order = ['shotgun', 'rocket', 'pistol'];
           self.selectWeapon(order[(order.indexOf(self.deskWeapon) + 1) % order.length]);
         }
+        else if (e.key === 'f' || e.key === 'F') { self.cycleView(); }
+        else if ((e.key === 'v' || e.key === 'V') && !e.repeat) { EARS.start(); }
+        else if (e.key === 'r' || e.key === 'R') { VOICE.apply({ action: 'read' }); }
       });
+
+      // push-to-talk: hold to speak, release to send
+      window.addEventListener('keyup', function (e) {
+        if (e.key === 'v' || e.key === 'V') { EARS.stop(); }
+      });
+
+      var vb = document.getElementById('voiceBtn');
+      if (vb) {
+        vb.addEventListener('click', function () {
+          // permission must be granted out here; the prompt cannot render
+          // once you are inside an immersive session
+          EARS.arm(function (ok) {
+            vb.textContent = ok ? 'Voice armed' : 'Voice unavailable';
+            vb.classList.toggle('on', ok);
+            if (ok) { VOICE.note('Hold V and say what you want to see'); }
+            VOICE.paint();
+          });
+        });
+      }
+      var vw = document.getElementById('viewBtn');
+      if (vw) { vw.addEventListener('click', function () { self.cycleView(); }); }
+      VOICE.paint();
+    },
+
+    cycleView: function () {
+      var name = VIEW.applyPreset(VIEW.preset < 0 ? 0 : VIEW.preset + 1);
+      var b = document.getElementById('viewBtn');
+      if (b) { b.textContent = 'Display: ' + name; }
+      this.say(name + ' display');
+      MOUTH.say(name + ' display');
+      VOICE.paint();
+      return name;
     },
 
     selectWeapon: function (w) {
@@ -3577,6 +4147,51 @@
         this.paint();
       }
       this.drop(el);
+    },
+
+    /* The pointer orbits the crosshair at a fixed radius, aimed at the
+       closest contact. It vanishes the moment that contact is inside your
+       field of view — an arrow drawn over the thing it is pointing at is
+       worse than no arrow. */
+    stepArrow: function () {
+      var cam = this.el.camera;
+      if (!cam) { return; }
+      if (!this.arrowG) {
+        this.arrowG = arrowSprite();
+        this.arrowL = arrowLabelSprite();
+        this.arrowG.renderOrder = 1002;
+        this.arrowL.renderOrder = 1002;
+        this.arrowG.scale.set(0.30, 0.30, 1);
+        this.arrowL.scale.set(0.46, 0.158, 1);
+        drawArrowGlyph(this.arrowG);
+        cam.add(this.arrowG);
+        cam.add(this.arrowL);
+      }
+      var show = !!VIEW.on.arrow && this.running && !this.paused;
+      if (!show) { this.arrowG.visible = this.arrowL.visible = false; return; }
+
+      var best = null, bestD = Infinity, p = new THREE.Vector3();
+      for (var i = 0; i < this.live.length; i++) {
+        var c = this.live[i].components.target;
+        if (!c || !c.alive) { continue; }
+        this.live[i].object3D.getWorldPosition(p);
+        var d = p.distanceTo(this.target);
+        if (d < bestD) { bestD = d; best = p.clone(); }
+      }
+      if (!best) { this.arrowG.visible = this.arrowL.visible = false; return; }
+
+      var v = best; cam.worldToLocal(v);
+      var off = Math.atan2(Math.sqrt(v.x * v.x + v.y * v.y), -v.z);
+      if (v.z < 0 && off < 0.34) {            // already comfortably on screen
+        this.arrowG.visible = this.arrowL.visible = false;
+        return;
+      }
+      var a = Math.atan2(v.y, v.x);
+      this.arrowG.visible = this.arrowL.visible = true;
+      this.arrowG.position.set(Math.cos(a) * 0.42, Math.sin(a) * 0.42, -1.6);
+      this.arrowG.material.rotation = a - Math.PI / 2;
+      this.arrowL.position.set(Math.cos(a) * 0.63, Math.sin(a) * 0.63, -1.6);
+      drawArrowLabel(this.arrowL, bestD);
     },
 
     nextWave: function () {
@@ -4084,6 +4699,8 @@
         S3.listener(this.target, this.camDir, this.camUp);
       }
 
+      this.stepArrow();
+
       this.sinceSpawn += dt;
       if (this.sinceSpawn >= this.spawnInterval()) {
         this.sinceSpawn = 0;
@@ -4101,6 +4718,14 @@
     hr: HR,
     train: AI_TRAIN,
     music: Music,
+    view: VIEW,
+    fields: FIELDS,
+    presets: PRESETS,
+    voice: VOICE,
+    ears: EARS,
+    mouth: MOUTH,
+    brain: BRAIN,
+    parse: localGrammar,
     stress: function () { return HR.stress(); },
     penalties: function () {
       return {
