@@ -2287,7 +2287,10 @@
       this._simT = setInterval(function () {
         var g = window.DroneRange && window.DroneRange.game && window.DroneRange.game();
         var wavePush = g && g.running ? Math.min(0.30, (g.wave - 1) * 0.06) : 0;
-        self.load = Math.max(0, self.load - 0.020);
+        /* Slow enough that mistakes in the same wave accumulate rather than
+           each one washing out before the next lands. That accumulation is
+           the thing worth feeling. */
+        self.load = Math.max(0, self.load - 0.013);
 
         var intensity = Math.min(1, self.load + wavePush);
         // flat out in this simulation means 126, not a textbook maximum
@@ -3356,8 +3359,13 @@
     OVER: 100,                // bpm above which it is offered at all
     active: false, t: 0, done: null, skipped: false,
 
+    /* Two conditions, both necessary. A high pulse after a clean round is
+       just intensity and does not need interrupting; a mistake with a settled
+       pulse does not either. It is the pair that is worth stopping for. */
     needed: function () {
-      return HR.live() && HR.bpm > this.OVER;
+      if (!HR.live() || HR.bpm <= this.OVER) { return false; }
+      var g = window.DroneRange && window.DroneRange.game && window.DroneRange.game();
+      return !!(g && g.lastMistakes > 0);
     },
 
     span: function () { return this.IN + this.OUT; },
@@ -4338,6 +4346,8 @@
       this.running = false;
       this.score = 0;
       this.civilian = 0;
+      this.mistakes = 0;
+      this.lastMistakes = 0;
       this.kills = 0;
       this.wave = 1;
       this.sinceSpawn = 0;
@@ -4587,8 +4597,38 @@
       });
     },
 
+    /* Both controllers, twice. A firing recoil is one pulse; a mistake is a
+       double tap, so it is distinguishable without looking. */
+    rumbleMistake: function (strength) {
+      var self = this;
+      var power = Math.min(1, 0.55 + strength * 0.45);
+      var ms = strength > 0.6 ? 170 : 110;
+      this.rumble(null, power, ms);
+      clearTimeout(this._mistakeBuzz);
+      this._mistakeBuzz = setTimeout(function () {
+        self.rumble(null, power, ms);
+      }, ms + 70);
+
+      // handheld and phone-in-headset cases get the same signal
+      try {
+        if (navigator.vibrate) {
+          navigator.vibrate([ms, 70, ms]);
+        }
+      } catch (e) { /* haptics are a bonus, never a blocker */ }
+    },
+
     penalise: function (points, message, strength) {
-      HR.bump(strength > 0.8 ? 0.30 : strength > 0.45 ? 0.12 : 0.055);
+      this.mistakes = (this.mistakes || 0) + 1;
+
+      /* Each mistake in a wave costs more than the one before it. The first
+         is a jolt; by the fourth you are behind the round and your pulse
+         says so. Capped, so it climbs steeply and then plateaus rather than
+         running away. */
+      var base = strength > 0.8 ? 0.34 : strength > 0.45 ? 0.16 : 0.08;
+      var esc = 1 + Math.min(1.5, (this.mistakes - 1) * 0.25);
+      HR.bump(base * esc);
+
+      this.rumbleMistake(strength);
       this.score += points;               // points is negative
       this.paint();
       if (this.visor && this.visor.components['visor-flash']) {
@@ -4608,7 +4648,6 @@
         this._bloodT = setTimeout(function () { b.classList.remove('hit'); },
                                   200 + strength * 500);
       }
-      this.rumble(null, Math.min(1, strength), strength > 0.6 ? 220 : 90);
       this.say(message);
     },
 
@@ -5000,6 +5039,8 @@
     nextWave: function () {
       HR.bump(0.09);
       this.waveTime = 0;
+      // armWave is about to clear the counter, so keep what the wave cost
+      this.lastMistakes = this.mistakes || 0;
       this.wave++;
       this.armWave();
       sfx.wave();
@@ -5015,6 +5056,7 @@
       this.nextSwarmAt = 5;
       this.sinceSpawn = 0;
 
+      this.mistakes = 0;
       this.queue = [];
       var missiles = 0, n = this.trickleCount();
       var armoured = 0;
