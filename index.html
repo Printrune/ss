@@ -349,6 +349,23 @@
               border-radius: 2px; padding: 1px 5px; margin-left: 7px; }
   .gun .rng.tight { background: var(--alarm); color: #fff; }
 
+  /* ------------------------------------------------- phone: contacts only
+     Everything that is a readout about the RUN goes; everything that is a
+     readout about a CONTACT stays, because the per-contact markers are canvas
+     sprites inside the 3D scene rather than DOM, so none of this touches
+     them. The crosshair stays: it is an aiming reference, not data. */
+  [data-device="phone"] #dials,
+  [data-device="phone"] #belt,
+  [data-device="phone"] #viewchips,
+  [data-device="phone"] #lockhint,
+  [data-device="phone"] #guns { display: none !important; }
+
+  /* the start menu keeps its buttons but loses the diagnostics table and the
+     desktop-only instructions */
+  [data-device="phone"] #diag,
+  [data-device="phone"] .foot { display: none; }
+  [data-device="phone"] .card { padding-bottom: 8px; }
+
   .accrow { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
   .acc { display: inline-flex; align-items: baseline; gap: 6px;
          font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px;
@@ -769,6 +786,49 @@
 (function () {
   'use strict';
   window.__startPending = false;
+
+  /* ---------------------------------------------------- what am I running on
+     A phone should show the contacts and nothing else. The trap is that the
+     Quest reports itself as Android — and the Quest 1 user agent literally
+     contains the word "Mobile" — so both of the obvious tests would hide the
+     HUD on the headset, which is the one place it is needed most.
+
+     So: identify the HEADSET positively and let that win. Only something we
+     have actively ruled out as a headset, on a small screen, with a coarse
+     pointer, is treated as a phone. */
+  var ua = navigator.userAgent || '';
+  var saysHeadset = /OculusBrowser|Quest|Pico|VivePort|Wolvic/i.test(ua);
+
+  function classify(xrCapable) {
+    var headset = saysHeadset || xrCapable;
+    var small = Math.min(window.innerWidth, window.innerHeight) < 520 ||
+                window.innerWidth < 820;
+    var coarse = window.matchMedia &&
+                 window.matchMedia('(any-pointer: coarse)').matches;
+    var kind = headset ? 'headset'
+             : (small && coarse) ? 'phone'
+             : 'desktop';
+    document.documentElement.setAttribute('data-device', kind);
+    window.__device = kind;
+    return kind;
+  }
+
+  classify(false);            // a first guess so the CSS applies immediately
+
+  /* isSessionSupported is the strongest signal there is, but it is a promise,
+     so the answer lands a moment later and we re-classify then. A headset can
+     only ever be promoted INTO 'headset', never out of it. */
+  if (navigator.xr && navigator.xr.isSessionSupported) {
+    navigator.xr.isSessionSupported('immersive-vr').then(function (ok) {
+      if (ok) { classify(true); }
+    })['catch'](function () {});
+  }
+
+  // a Quest browser window dragged narrow must not become a phone
+  window.addEventListener('resize', function () {
+    if (document.documentElement.getAttribute('data-device') === 'headset') { return; }
+    classify(false);
+  });
 
   function set(id, text, cls) {
     var el = document.getElementById(id);
@@ -5177,6 +5237,20 @@
        metres; this tells you where twelve metres actually is. It shrinks
        live as stress closes the pattern down, which is the part a number
        alone never conveys. */
+    /* The score, rockets, radar and vitals panels live in the 3D scene, so
+       the phone stylesheet cannot touch them. On a phone they go too: the
+       instruction was contacts and nothing else. */
+    applyDevice: function () {
+      if (this._deviceDone) { return; }
+      this._deviceDone = true;
+      if (window.__device !== 'phone') { return; }
+      ['radar', 'vrscore', 'vrrockets', 'vrvitals'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el && el.object3D) { el.object3D.visible = false; }
+      });
+      this.say('Phone display \u2014 contacts only');
+    },
+
     stepReach: function (time) {
       var cam = this.el.camera;
       if (!cam) { return; }
@@ -6348,6 +6422,7 @@
       }
 
       this.autoHR();
+      this.applyDevice();
       this.stepReach(time);
       this.stepArrow();
 
