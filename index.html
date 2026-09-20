@@ -336,6 +336,14 @@
   .go:hover { filter: brightness(1.12); }
   #aar { cursor: default; }
 
+  .gorow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+  .gun.restart { border-color: rgba(255,77,61,.45); color: rgba(220,150,145,.9); }
+  .gun.restart:hover { border-color: var(--alarm); color: var(--alarm);
+                       background: rgba(255,77,61,.10); }
+  .gun.restart.armed { background: var(--alarm); border-color: var(--alarm);
+                       color: #0b1016; font-weight: 700; }
+  .restnote { font-size: 11px; color: var(--alarm); opacity: .85; }
+
   .accrow { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
   .acc { display: inline-flex; align-items: baseline; gap: 6px;
          font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px;
@@ -627,9 +635,10 @@
     <a-entity id="sky" geometry="primitive: sphere; radius: 400; segmentsWidth: 40; segmentsHeight: 24"
               sky-dome></a-entity>
     <a-entity id="floor" rotation="-90 0 0" range-floor></a-entity>
+    <a-entity id="ship" warship></a-entity>
     <a-entity id="loPanel" lo-panel></a-entity>
 
-    <a-entity id="rig" position="0 0 0">
+    <a-entity id="rig" position="0 4.6 0">
       <a-entity id="cam" camera look-controls="pointerLockEnabled: true" position="0 1.6 0" desktop-gun>
         <a-entity id="visor" position="0 0 -0.32" visor-flash></a-entity>
         <a-entity id="aarPanel" position="0 0 -1.45" aar-panel></a-entity>
@@ -1358,6 +1367,132 @@
     }
   });
 
+  /* ===================================================== the ship under you
+     You are not floating on the sea, you are standing on the flight deck of
+     a frigate. Everything is laid out so it never blocks the sky you have to
+     watch: the superstructure and mast sit ABAFT of where you stand, the bow
+     runs away forward, and the railings are low enough to see over. */
+  var DECK_Y = 4.6;          // height of the deck above the waterline
+
+  AFRAME.registerComponent('warship', {
+    init: function () {
+      var g = new THREE.Group();
+      var hullMat  = mat(0x3E464F, { emissive: 0x272D34 });
+      var deckMat  = mat(0x4A525B, { emissive: 0x2E343B });
+      var dark     = mat(0x2A3038, { emissive: 0x1B2026 });
+      var pale     = mat(0x6E7883, { emissive: 0x424A53 });
+
+      // --- hull: a long box with a tapered forefoot, sitting in the water
+      var hull = new THREE.Mesh(new THREE.BoxGeometry(13, DECK_Y + 1.6, 46), hullMat);
+      hull.position.set(0, DECK_Y / 2 - 0.8, 4);
+      hull.name='hull'; g.add(hull);
+
+      var bowGeo = new THREE.ConeGeometry(1, 1, 4);
+      bowGeo.rotateY(Math.PI / 4);        // flat faces port and starboard
+      bowGeo.rotateX(-Math.PI / 2);       // apex forward, along -z
+      bowGeo.scale(6.5, (DECK_Y + 1.6) / 2, 16);
+      var bow = new THREE.Mesh(bowGeo, hullMat);
+      bow.position.set(0, DECK_Y / 2 - 0.8, -27);
+      bow.name = 'bow'; g.add(bow);
+
+      // --- deck you stand on
+      var deck = new THREE.Mesh(new THREE.BoxGeometry(12.6, 0.3, 46), deckMat);
+      deck.position.set(0, DECK_Y, 4);
+      deck.name='deck'; g.add(deck);
+      /* A genuinely flat triangle, so it cannot stand up into the sightline.
+         Rotating -90 about x sends the shape's +y to world -z, which is
+         forward, so the apex lands at the bow. */
+      var fd = new THREE.Shape();
+      fd.moveTo(-6.3, 0); fd.lineTo(6.3, 0); fd.lineTo(0, 16); fd.lineTo(-6.3, 0);
+      var fdGeo = new THREE.ShapeGeometry(fd);
+      fdGeo.rotateX(-Math.PI / 2);
+      var foredeck = new THREE.Mesh(fdGeo, deckMat);
+      foredeck.position.set(0, DECK_Y + 0.16, -19);
+      foredeck.name = 'foredeck'; g.add(foredeck);
+
+      // --- superstructure: behind you, so the sky ahead stays clear
+      var house = new THREE.Mesh(new THREE.BoxGeometry(8.4, 4.2, 11), pale);
+      house.name='house'; house.position.set(0, DECK_Y + 2.25, 14); g.add(house);
+      var bridge = new THREE.Mesh(new THREE.BoxGeometry(7.0, 2.6, 6.0), pale);
+      bridge.position.set(0, DECK_Y + 5.6, 11.5); g.add(bridge);
+      var glass = new THREE.Mesh(new THREE.BoxGeometry(7.05, 1.1, 0.2),
+        new THREE.MeshStandardMaterial({ color: 0x0E1A24, emissive: 0x16303F,
+                                         roughness: 0.15, metalness: 0.6 }));
+      glass.position.set(0, DECK_Y + 5.9, 8.45); g.add(glass);
+
+      // mast and the dish that is notionally feeding your scope
+      var mast = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.34, 7.5, 8), dark);
+      mast.position.set(0, DECK_Y + 10.4, 13); g.add(mast);
+      var array = new THREE.Mesh(new THREE.BoxGeometry(3.4, 2.2, 0.35), dark);
+      array.position.set(0, DECK_Y + 12.6, 13); g.add(array);
+      this.array = array;
+
+      // --- forward armament, for the silhouette
+      var barbette = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.9, 0.8, 12), pale);
+      barbette.name='barbette'; barbette.position.set(0, DECK_Y + 0.55, -19); g.add(barbette);
+      var turret = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.3, 3.4), pale);
+      turret.name='turret'; turret.position.set(0, DECK_Y + 1.0, -19.4); g.add(turret);
+      var barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.18, 4.6, 10), dark);
+      barrel.rotation.x = Math.PI / 2.06;
+      barrel.name='barrel'; barrel.position.set(0, DECK_Y + 1.25, -22.3); g.add(barrel);
+
+      // vertical launch cells forward: a grid of dark hatches
+      for (var cx = -1; cx <= 1; cx++) {
+        for (var cz = 0; cz < 4; cz++) {
+          var cell = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.14, 1.5), dark);
+          cell.position.set(cx * 1.9, DECK_Y + 0.2, -9 - cz * 1.9);
+          g.add(cell);
+        }
+      }
+
+      // --- railings: low, so nothing you need to see is behind them
+      var railMat = new THREE.MeshBasicMaterial({ color: 0x8C99A6, fog: false });
+      var postGeo = new THREE.CylinderGeometry(0.045, 0.045, 1.1, 5);
+      var rails = new THREE.Group();
+      for (var side = -1; side <= 1; side += 2) {
+        for (var z = -22; z <= 26; z += 2) {
+          var post = new THREE.Mesh(postGeo, railMat);
+          post.position.set(side * 6.2, DECK_Y + 0.7, z);
+          rails.add(post);
+        }
+        [0.45, 1.05].forEach(function (h) {
+          var wire = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 48), railMat);
+          wire.position.set(side * 6.2, DECK_Y + 0.15 + h, 2);
+          rails.add(wire);
+        });
+      }
+      g.add(rails);
+
+      // --- a bow wave and stern wake, so the ship reads as under way
+      var wake = new THREE.Mesh(new THREE.PlaneGeometry(12, 40),
+        new THREE.MeshBasicMaterial({ color: 0xCFE6F5, transparent: true,
+                                      opacity: 0.22, fog: false,
+                                      side: THREE.DoubleSide }));
+      wake.rotation.x = -Math.PI / 2;
+      wake.position.set(0, 0.22, 46);
+      g.add(wake);
+      this.wake = wake;
+
+      // deck lighting, kept dim: this is a darkened ship
+      [[-5.4, -2], [5.4, -2], [-5.4, 18], [5.4, 18]].forEach(function (L) {
+        var lamp1 = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 6), lamp(0xFF6A4A));
+        lamp1.position.set(L[0], DECK_Y + 1.25, L[1]);
+        g.add(lamp1);
+      });
+
+      this.el.setObject3D('mesh', g);
+    },
+
+    tick: function (time, dt) {
+      if (!dt) { return; }
+      // the array turns, slowly, because a radar that does not is a prop
+      if (this.array) { this.array.rotation.y = (time / 4200) % (Math.PI * 2); }
+      if (this.wake) {
+        this.wake.material.opacity = 0.18 + Math.sin(time / 700) * 0.05;
+      }
+    }
+  });
+
   AFRAME.registerComponent('range-floor', {
     init: function () {
       /* A texture alone still reads as a painted floor, because the
@@ -1380,6 +1515,8 @@
       }
       this.t = 0;
       var ring = new THREE.Group();
+      ring.position.z = 4.80;            // the deck, not the water (this entity is rotated flat,
+                                         // so its local z is world height)
       // 12 m is the shotgun's reach, so it gets the bright marking
       [[6, 0x2A4A66, 0.20], [12, AMBER, 0.50], [20, 0x2A4A66, 0.22], [30, 0x2A4A66, 0.15]]
         .forEach(function (spec) {
@@ -1725,6 +1862,19 @@
       for (i = 0; i < n - 1; i++) {
         var r = rows[i], pos = LO.xy(i, n);
         var on, tail = '', rec = false;
+        if (r.kind === 'restart') {
+          if (i === sel) {
+            x.fillStyle = 'rgba(255,77,61,0.22)';
+            x.fillRect(pos.x - 14, pos.y - 21, LO.COLW - 34, 42);
+            x.fillStyle = '#FF4D3D';
+            x.fillRect(pos.x - 14, pos.y - 21, 6, 42);
+          }
+          x.textAlign = 'left';
+          x.font = '700 27px "IBM Plex Mono", ui-monospace, monospace';
+          x.fillStyle = '#FF4D3D';
+          x.fillText('\u21ba ' + r.label.toUpperCase(), pos.x, pos.y);
+          continue;
+        }
         if (r.kind === 'advice') {
           if (i === sel) {
             x.fillStyle = 'rgba(255,176,32,0.20)';
@@ -2735,7 +2885,7 @@
 
     /* Free feeds would make wave one's lesson pointless, so they are not.
        The allowance grows, but never fast enough to stop it being a choice. */
-    COSTED: ['size', 'speed', 'range', 'xpdr', 'ai'],
+    COSTED: ['size', 'speed', 'range', 'xpdr', 'ai', 'arrow'],
 
     channels: function () {
       var g = window.DroneRange && window.DroneRange.game && window.DroneRange.game();
@@ -2945,15 +3095,16 @@
      itself a decision, and a cluttered scope and an empty one fail in
      opposite directions. VIEW.rev bumps on every change so the cached sprite
      stamps know to redraw. */
-  /* Five readouts, and that is the lot. The bracket and the nearest-contact
-     arrow stay on for free — they tell you something is there, not what it
-     is, so they are not part of the evidence you are weighing. */
+  /* Six readouts, and that is the lot. Only the bracket is free: it says a
+     contact exists without saying anything about it. Everything else,
+     including which one is closest, is evidence and costs a channel. */
   var FIELDS = [
     { key: 'size',  name: 'size',           say: 'return size' },
     { key: 'speed', name: 'speed',          say: 'speed' },
     { key: 'range', name: 'distance',       say: 'distance' },
     { key: 'xpdr',  name: 'transponder',    say: 'the transponder' },
-    { key: 'ai',    name: 'AI probability', say: 'the classifier probability' }
+    { key: 'ai',    name: 'AI probability', say: 'the classifier probability' },
+    { key: 'arrow', name: 'nearest arrow',   say: 'the nearest contact arrow' }
   ];
   var CUE_FIELD = { SPEED: 'speed', SIZE: 'size', XPDR: 'xpdr' };
 
@@ -2966,13 +3117,13 @@
     },
     all: function (val) {
       for (var i = 0; i < FIELDS.length; i++) { this.on[FIELDS[i].key] = val; }
-      this.on.ring = true; this.on.arrow = true;      // never spent, never off
+      this.on.ring = true;          // the bracket is never spent and never off
       this.rev++;
     },
     only: function (keys) {
       this.all(false);
       for (var i = 0; i < keys.length; i++) { this.on[keys[i]] = true; }
-      this.on.ring = true; this.on.arrow = true;
+      this.on.ring = true;
       this.rev++;
     },
     /* Snapshot of what the loadout bought, so CLEAN is a momentary declutter
@@ -3014,8 +3165,8 @@
     return pr.name;
   };
   VIEW.all(false);          // wave one runs blind; every readout is earned
-  VIEW.on.ring = true;      // free: something is there
-  VIEW.on.arrow = true;     // free: and it is that way
+  VIEW.on.ring = true;      // the bracket is free: something is there.
+                            // Which one is nearest is information, so it is not.
 
   var SIGNATURE = {
     drone:    { profile: 'QUADROTOR', emissn: 'ELECTRIC',  xpdr: 'NONE' },
@@ -5309,7 +5460,11 @@
       h += '</div><p class="lonote">Rules read what the sensors report. A spoofed ' +
            'contact will satisfy your rule exactly as it fools the classifier.</p></div>';
 
-      h += '</div><button class="go" id="loGo">Fly wave ' + this.wave + '</button></div>';
+      h += '</div><div class="gorow">' +
+           '<button class="go" id="loGo">Fly wave ' + this.wave + '</button>' +
+           '<button class="gun restart" id="loRestart" type="button">Restart run</button>' +
+           '<span class="restnote" id="loRestNote"></span>' +
+           '</div></div>';
       return h;
     },
 
@@ -5379,6 +5534,31 @@
 
       var go = document.getElementById('loGo');
       if (go) { go.addEventListener('click', function () { self.resume(); }); }
+
+      var rs = document.getElementById('loRestart');
+      var note = document.getElementById('loRestNote');
+      if (rs) {
+        rs.addEventListener('click', function () {
+          if (!self._restartArmed) {
+            // one run is too much to lose to a stray click
+            self._restartArmed = true;
+            rs.textContent = 'Press again to confirm';
+            rs.classList.add('armed');
+            if (note) { note.textContent = 'score, rules and everything the classifier learned'; }
+            clearTimeout(self._restartT);
+            self._restartT = setTimeout(function () {
+              self._restartArmed = false;
+              rs.textContent = 'Restart run';
+              rs.classList.remove('armed');
+              if (note) { note.textContent = ''; }
+            }, 4000);
+            return;
+          }
+          clearTimeout(self._restartT);
+          self._restartArmed = false;
+          self.restartRun();
+        });
+      }
     },
 
     flashChannels: function () {
@@ -5448,6 +5628,9 @@
                       label: ROE_AXES[i].label + ' = ' + ROE_AXES[i].values[v] });
         }
       }
+      rows.push({ kind: 'restart',
+                  label: this._restartArmed ? 'restart \u2014 pull again to confirm'
+                                            : 'restart the run' });
       rows.push({ kind: 'go', label: 'FLY THE WAVE' });
       return rows;
     },
@@ -5472,6 +5655,24 @@
       var r = this.loRows()[this.loSel];
       if (!r) { return; }
       if (r.kind === 'go') { this.loOn = false; this.resume(); return; }
+      if (r.kind === 'restart') {
+        if (!this._restartArmed) {
+          var me = this;
+          this._restartArmed = true;
+          clearTimeout(this._restartT);
+          this._restartT = setTimeout(function () {
+            me._restartArmed = false;
+            me.drawLoadoutPanel();
+          }, 4000);
+          this.drawLoadoutPanel();
+          return;
+        }
+        clearTimeout(this._restartT);
+        this._restartArmed = false;
+        this.loOn = false;
+        this.restartRun();
+        return;
+      }
       if (r.kind === 'advice') {
         var adv = ADVISOR.suggest(this);
         for (var a = 0; a < adv.picks.length; a++) {
@@ -5616,6 +5817,49 @@
       if (cv && cv.requestPointerLock) {
         try { cv.requestPointerLock(); } catch (e) {}
       }
+    },
+
+    /* Back to wave one, blind, with nothing learned. Everything the run
+       accumulated goes: the score, the log the debrief reads from, what the
+       classifier was taught, the feeds you paid for and the rules you wrote.
+       Anything left behind would make the next run quietly not a fresh one. */
+    restartRun: function () {
+      var i;
+      for (i = this.live.length - 1; i >= 0; i--) { this.drop(this.live[i]); }
+      this.live = [];
+
+      this.score = 0;
+      this.civilian = 0;
+      this.kills = 0;
+      this.calib = 0;
+      this.mistakes = 0;
+      this.lastMistakes = 0;
+      this.log = [];
+      this.wave = 1;
+      this.waveTime = 0;
+      this.elapsed = 0;
+      this.sinceSpawn = 0;
+
+      AI_TRAIN.acc = {};
+      AI_TRAIN.right = 0;
+      AI_TRAIN.wrong = 0;
+      AI_TRAIN.recompute();
+
+      LOADOUT.ready = false;
+      LOADOUT.weight = {};
+      LOADOUT.roe = {};
+      LOADOUT.speedOver = 0;
+      LOADOUT.init();
+
+      VIEW.all(false);          // wave one is blind again
+      VIEW.commit();
+
+      HR.load = 0;
+      if (HR.sim) { HR.settle(); }
+
+      this.armWave();
+      this.say('Run restarted \u2014 wave 1, no feeds');
+      this.resume();
     },
 
     resume: function () {
