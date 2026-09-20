@@ -336,6 +336,16 @@
   .go:hover { filter: brightness(1.12); }
   #aar { cursor: default; }
 
+  .accrow { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+  .acc { display: inline-flex; align-items: baseline; gap: 6px;
+         font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px;
+         letter-spacing: .05em; text-transform: uppercase; padding: 4px 8px;
+         border-radius: 3px; border: 1px solid rgba(120,146,174,.3);
+         color: rgba(150,172,196,.8); }
+  .acc b { font-size: 13px; }
+  .acc.good { border-color: rgba(95,217,139,.55); color: var(--friend); }
+  .acc.bad  { border-color: rgba(255,77,61,.55);  color: var(--alarm); }
+
   .loadout { margin-top: 18px; border-top: 1px solid rgba(70,88,111,.4); padding-top: 16px; }
   .lohead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
   .lohead h2 { margin: 0; }
@@ -2239,6 +2249,16 @@
       this.load = Math.max(0, Math.min(1, this.load + n));
     },
 
+    /* Finishing the exercise puts the simulated pulse back where it started.
+       A real one would take a couple of minutes to walk down; here the whole
+       point is that you see the exercise work, so it is allowed to land. */
+    settle: function () {
+      if (!this.sim) { return; }
+      this.load = 0;
+      this.simBpm = this.rest + 2;
+      this.feed(Math.round(this.simBpm));
+    },
+
     simulate: function () {
       var self = this;
       this.sim = true;
@@ -2665,12 +2685,13 @@
      the data block beside the marker is literally the reason for the number. */
   /* One arc per sensor. The ring fills as sources corroborate, so how much
      of the circle is lit IS the evidence — no separate panel to read. */
+  /* Three sensors, because three readouts is what a person can actually
+     weigh mid-engagement. Range is not a sensor — you always have it once
+     the feed is on. */
   var CUES = [
-    { tag: 'RDR', label: 'RADAR',    key: 'SPEED',   at: 40, w: 1.0 },
-    { tag: 'RCS', label: 'RETURN',   key: 'SIZE',    at: 32, w: 1.0 },
-    { tag: 'EO',  label: 'OPTICAL',  key: 'PROFILE', at: 24, w: 1.6 },
-    { tag: 'ACU', label: 'ACOUSTIC', key: 'EMISSN',  at: 16, w: 1.6 },
-    { tag: 'RF',  label: 'RF',       key: 'XPDR',    at: 10, w: 2.4 }
+    { tag: 'RDR', label: 'RADAR',  key: 'SPEED', at: 40, w: 1.0 },
+    { tag: 'RCS', label: 'RETURN', key: 'SIZE',  at: 28, w: 1.0 },
+    { tag: 'RF',  label: 'RF',     key: 'XPDR',  at: 12, w: 2.0 }
   ];
   var CUE_TOTAL = CUES.reduce(function (a, c) { return a + c.w; }, 0);
 
@@ -2699,14 +2720,8 @@
      from. Spoofing is not special-cased: a rule sees what the sensor reports,
      so a lying sensor fools your rule exactly as it fools the classifier. */
   var ROE_AXES = [
-    { key: 'xpdr',   field: 'xpdr',   cue: 'XPDR',    label: 'Transponder',
-      values: ['NONE', 'CIVIL', 'MIL', 'AIS'] },
-    { key: 'profile',field: 'profile',cue: 'PROFILE', label: 'Profile',
-      values: ['QUADROTOR', 'CRUISE', 'DELTA', 'AIRLINER', 'ORGANIC',
-               'TRAWLER', 'HULL', 'WAKE'] },
-    { key: 'emissn', field: 'emissn', cue: 'EMISSN',  label: 'Emission',
-      values: ['ELECTRIC', 'ROCKET', 'TURBOJET', 'TURBOFAN', 'NONE',
-               'DIESEL', 'CAVITATION'] }
+    { key: 'xpdr', field: 'xpdr', cue: 'XPDR', label: 'Transponder',
+      values: ['NONE', 'CIVIL', 'MIL', 'AIS'] }
   ];
 
   var LOADOUT = {
@@ -2717,14 +2732,13 @@
 
     /* Free feeds would make wave one's lesson pointless, so they are not.
        The allowance grows, but never fast enough to stop it being a choice. */
-    COSTED: ['ring', 'pct', 'band', 'range', 'ai', 'arrow',
-             'speed', 'size', 'profile', 'emissn', 'xpdr', 'roe'],
+    COSTED: ['size', 'speed', 'range', 'xpdr', 'ai'],
 
     channels: function () {
       var g = window.DroneRange && window.DroneRange.game && window.DroneRange.game();
       var wave = g ? g.wave : 1;
       if (wave <= 1) { return 0; }
-      return Math.min(this.COSTED.length, wave + 1);
+      return Math.min(this.COSTED.length, wave);
     },
 
     spent: function () {
@@ -2851,7 +2865,7 @@
 
       /* Its confidence in its own advice climbs with training — faster than
          the advice actually improves. That gap is the point. */
-      var sure = Math.min(96, 58 + Math.round(AI_TRAIN.level * 38));
+      var sure = 50 + Math.round(AI_TRAIN.recompute() * 45);
       return { picks: out.slice(0, Math.max(1, LOADOUT.channels())), stated: sure,
                trained: Math.round(AI_TRAIN.level * 100) };
     },
@@ -2928,22 +2942,17 @@
      itself a decision, and a cluttered scope and an empty one fail in
      opposite directions. VIEW.rev bumps on every change so the cached sprite
      stamps know to redraw. */
+  /* Five readouts, and that is the lot. The bracket and the nearest-contact
+     arrow stay on for free — they tell you something is there, not what it
+     is, so they are not part of the evidence you are weighing. */
   var FIELDS = [
-    { key: 'ring',   name: 'sensor ring',  say: 'sensor ring' },
-    { key: 'pct',    name: 'confidence',   say: 'track confidence' },
-    { key: 'band',   name: 'track status', say: 'track status' },
-    { key: 'range',  name: 'range',        say: 'range' },
-    { key: 'ai',     name: 'AI opinion',   say: 'the classifier opinion' },
-    { key: 'speed',  name: 'speed',        say: 'speed' },
-    { key: 'size',   name: 'size',         say: 'return size' },
-    { key: 'profile',name: 'profile',      say: 'optical profile' },
-    { key: 'emissn', name: 'emission',     say: 'acoustic emission' },
-    { key: 'xpdr',   name: 'transponder',  say: 'the transponder' },
-    { key: 'arrow',  name: 'nearest arrow',say: 'the nearest contact arrow' },
-    { key: 'roe',    name: 'rules verdict', say: 'your rules verdict' }
+    { key: 'size',  name: 'size',           say: 'return size' },
+    { key: 'speed', name: 'speed',          say: 'speed' },
+    { key: 'range', name: 'distance',       say: 'distance' },
+    { key: 'xpdr',  name: 'transponder',    say: 'the transponder' },
+    { key: 'ai',    name: 'AI probability', say: 'the classifier probability' }
   ];
-  var CUE_FIELD = { SPEED: 'speed', SIZE: 'size', PROFILE: 'profile',
-                    EMISSN: 'emissn', XPDR: 'xpdr' };
+  var CUE_FIELD = { SPEED: 'speed', SIZE: 'size', XPDR: 'xpdr' };
 
   var VIEW = {
     rev: 0,
@@ -2954,11 +2963,13 @@
     },
     all: function (val) {
       for (var i = 0; i < FIELDS.length; i++) { this.on[FIELDS[i].key] = val; }
+      this.on.ring = true; this.on.arrow = true;      // never spent, never off
       this.rev++;
     },
     only: function (keys) {
       this.all(false);
       for (var i = 0; i < keys.length; i++) { this.on[keys[i]] = true; }
+      this.on.ring = true; this.on.arrow = true;
       this.rev++;
     },
     /* Snapshot of what the loadout bought, so CLEAN is a momentary declutter
@@ -2999,7 +3010,9 @@
     }
     return pr.name;
   };
-  VIEW.all(false);          // wave one runs blind; everything is earned
+  VIEW.all(false);          // wave one runs blind; every readout is earned
+  VIEW.on.ring = true;      // free: something is there
+  VIEW.on.arrow = true;     // free: and it is that way
 
   var SIGNATURE = {
     drone:    { profile: 'QUADROTOR', emissn: 'ELECTRIC',  xpdr: 'NONE' },
@@ -3150,6 +3163,9 @@
      size — so a contact at 45 m is as legible as one at 9 m. */
   function panelSprite() { return spriteCanvas(420, 300); }
 
+  /* Five lines at most, and only the ones bought. No percentage-of-track,
+     no band, no rules verdict — the readout is the evidence itself, and the
+     judgement is the operator's to make from it. */
   function drawPanel(sprite, c, dist, pct) {
     var u = sprite.userData;
     var got = [];
@@ -3161,42 +3177,22 @@
       if (dist <= CUES[i].at) { anyCue = true; break; }
     }
     var conflict = conflictVisible(c, dist);
-    var stamp = got.length + '|' + Math.round(pct) + '|' + c.data.type +
-                (conflict ? 'X' : '-') + '|' + VIEW.rev + '|' +
-                (VIEW.on.roe ? roeVerdict(c, dist).state : '');
+    var stamp = got.length + '|' + c.data.type + (conflict ? 'X' : '-') + '|' + VIEW.rev;
     if (u.last === stamp) { return; }
     u.last = stamp;
 
     var x = u.ctx, rgb = iffRGB(pct);
     var col = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
-    var band = trackBand(pct);
     x.clearRect(0, 0, 420, 300);
-
     x.textAlign = 'center';
     x.textBaseline = 'middle';
 
-    // the panel packs upward, so hiding a field closes the gap it left
-    var y = 40;
-    if (VIEW.on.pct) {
-      x.font = '800 74px "Saira", system-ui, sans-serif';
-      x.lineWidth = 12; x.strokeStyle = 'rgba(4,8,13,0.95)';
-      x.strokeText(Math.round(pct) + '%', 210, y);
-      x.fillStyle = col;
-      x.fillText(Math.round(pct) + '%', 210, y);
-      y += 52;
-    }
+    var y = 150 - got.length * 21;
 
-    if (VIEW.on.band) {
-      var sub = conflict ? 'SOURCES DISAGREE' : (band + ' \u00b7 ' + got.length + '/' + CUES.length);
-      x.font = '700 28px "Saira", system-ui, sans-serif';
-      x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
-      x.strokeText(sub, 210, y);
-      x.fillStyle = conflict ? '#FFB020' : 'rgba(170,190,212,0.95)';
-      x.fillText(sub, 210, y);
-      y += 46;
-    } else if (conflict && got.length) {
-      // never let the operator hide the one thing that means they are being lied to
-      x.font = '700 28px "Saira", system-ui, sans-serif';
+    /* The one thing an operator must not be able to switch off: two sensors
+       contradicting each other. Everything else is optional. */
+    if (conflict && got.length) {
+      x.font = '700 30px "Saira", system-ui, sans-serif';
       x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
       x.strokeText('SOURCES DISAGREE', 210, y);
       x.fillStyle = '#FFB020';
@@ -3205,13 +3201,12 @@
     }
 
     if (!got.length) {
-      if (VIEW.on.pct || VIEW.on.band) {
-        var msg = anyCue ? 'RETURNS HIDDEN' : 'NO RETURNS';
+      if (anyCue) {
         x.font = '700 30px "Saira", system-ui, sans-serif';
         x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
-        x.strokeText(msg, 210, y);
-        x.fillStyle = 'rgba(120,146,174,0.95)';
-        x.fillText(msg, 210, y);
+        x.strokeText('NO FEED', 210, 150);
+        x.fillStyle = 'rgba(120,146,174,0.85)';
+        x.fillText('NO FEED', 210, 150);
       }
       u.tex.needsUpdate = true;
       return;
@@ -3221,24 +3216,12 @@
       var gi = CUES.indexOf(got[i]);
       var line = got[i].tag + '  ' + cueValue(got[i].key, c, gi);
       var isLie = c.liar === gi && conflict;
-      x.font = '600 29px "IBM Plex Mono", ui-monospace, monospace';
-      x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
+      x.font = '600 34px "IBM Plex Mono", ui-monospace, monospace';
+      x.lineWidth = 10; x.strokeStyle = 'rgba(4,8,13,0.95)';
       x.strokeText(line, 210, y);
       x.fillStyle = isLie ? '#FFB020' : col;
       x.fillText(line, 210, y);
-      y += 33;
-    }
-
-    if (VIEW.on.roe) {
-      var rv = roeVerdict(c, dist);
-      var rc = rv.state === 'MEETS RULES' ? '#FF4D3D'
-             : rv.state === 'CLEAR OF RULES' ? '#5FD98B' : 'rgba(120,146,174,0.95)';
-      y += 4;
-      x.font = '700 27px "Saira", system-ui, sans-serif';
-      x.lineWidth = 9; x.strokeStyle = 'rgba(4,8,13,0.95)';
-      x.strokeText(rv.state, 210, y);
-      x.fillStyle = rc;
-      x.fillText(rv.state, 210, y);
+      y += 42;
     }
     u.tex.needsUpdate = true;
   }
@@ -3248,31 +3231,52 @@
      it is barely better than a coin toss; once optical or the transponder
      have returned it is very good. Its STATED confidence never admits this —
      it sounds equally sure either way. */
-  var AI_TIER_SKILL = [0.52, 0.58, 0.82, 0.86, 0.97];   // RDR, RCS, EO, ACU, RF
-
-  /* It learns from you: every call you get right is a labelled example, every
-     wrong one poisons the set. It really does get better — but its stated
-     confidence climbs faster than its accuracy, which is how complacency
-     sets in. */
+  /* The classifier does not have one accuracy, it has one per kind of thing.
+     Every type starts at a coin flip — 50%, no opinion worth the name — and
+     moves only on what you shoot. Down a hostile of that type and it learns
+     the type; down a civilian and you have taught it something false about
+     that type instead. Nothing else moves it, so an unfamiliar contact stays
+     at 50% however long the round runs. */
   var AI_TRAIN = {
-    level: 0,
+    acc: {},
     right: 0, wrong: 0,
-    feed: function (playerWasRight) {
-      this.level = Math.max(0, Math.min(1,
-        this.level + (playerWasRight ? 0.07 : -0.10)));
-      if (playerWasRight) { this.right++; } else { this.wrong++; }
+
+    of: function (type) {
+      if (this.acc[type] === undefined) { this.acc[type] = 0.5; }
+      return this.acc[type];
     },
-    skill: function (base) { return base + (1 - base) * 0.55 * this.level; },
-    swagger: function () { return Math.round(this.level * 14); }
+
+    /* Shot something down: was it a threat? The lesson lands on that type. */
+    feedKill: function (type, wasHostile) {
+      var v = this.of(type);
+      v += wasHostile ? 0.07 : -0.12;          // a bad kill costs more than a good one earns
+      this.acc[type] = Math.max(0.05, Math.min(0.97, v));
+      if (wasHostile) { this.right++; } else { this.wrong++; }
+      return this.acc[type];
+    },
+
+    /* Its overall standing, for the model bar — the mean of what it knows. */
+    level: 0,
+    recompute: function () {
+      var n = 0, sum = 0;
+      for (var k in this.acc) {
+        if (this.acc.hasOwnProperty(k)) { sum += this.acc[k]; n++; }
+      }
+      this.level = n ? Math.max(0, (sum / n - 0.5) * 2) : 0;
+      return this.level;
+    },
+
+    swagger: function () { return 0; }         // it states what it has, no more
   };
 
+  /* How much the classifier has to go on, expressed as how many sensors have
+     returned. Derived from CUES so it cannot drift out of step with them. */
   function aiTier(dist) {
-    if (dist <= 10) { return 4; }
-    if (dist <= 16) { return 3; }
-    if (dist <= 24) { return 2; }
-    if (dist <= 32) { return 1; }
-    if (dist <= 40) { return 0; }
-    return -1;
+    var n = -1;
+    for (var i = 0; i < CUES.length; i++) {
+      if (dist <= CUES[i].at) { n = i; }
+    }
+    return n;
   }
 
   function aiHash(seed, tier, salt) {
@@ -3282,27 +3286,34 @@
 
   /* The reason is the honest part: it names the cue it leaned on. When a
      sensor is lying, it cites the lie — which is how you catch it. */
+  /* It names the sensor it leaned on. When one is lying it cites the lie,
+     which is how you catch it. Reads the live cue list rather than fixed
+     indices, so cutting or adding a sensor cannot leave it pointing at
+     something that is not there. */
   function aiReason(tier, c, saysHostile, spoofed) {
-    if (spoofed && c.liar >= 0) {
-      return 'weighting ' + CUES[c.liar].tag + ' ' + cueValue(CUES[c.liar].key, c, c.liar);
+    if (spoofed && c.liar >= 0 && CUES[c.liar]) {
+      return 'weighting ' + CUES[c.liar].tag + ' ' +
+             cueValue(CUES[c.liar].key, c, c.liar);
     }
-    if (tier >= 4) { return 'transponder ' + cueValue('XPDR', c, 4); }
-    if (tier >= 3) { return cueValue('EMISSN', c, 3) + ' signature'; }
-    if (tier >= 2) { return 'profile reads ' + cueValue('PROFILE', c, 2); }
-    if (tier >= 1) { return 'return size ' + cueValue('SIZE', c, 1) + ' only'; }
-    return 'radar track only — thin';
+    if (tier < 0 || !CUES[tier]) { return 'nothing has returned yet'; }
+    var q = CUES[tier];
+    var val = cueValue(q.key, c, tier);
+    if (tier === 0) { return q.label.toLowerCase() + ' only \u2014 thin'; }
+    return q.label.toLowerCase() + ' reads ' + val;
   }
 
   function aiVerdict(seed, tier, hostile, spoofed, c) {
     if (tier < 0) { return null; }
-    var skill = AI_TRAIN.skill(AI_TIER_SKILL[tier]);
-    // spoofing stays its blind spot however well trained it is
-    if (spoofed) { skill = 0.22 + 0.18 * AI_TRAIN.level; }
+    var type = c ? c.data.type : 'drone';
+    var skill = AI_TRAIN.of(type);
+    // a spoofed sensor is its blind spot whatever it has learned
+    if (spoofed) { skill = Math.min(skill, 0.30); }
     var right = aiHash(seed, tier, 1) < skill;
     var saysHostile = right ? hostile : !hostile;
-    var stated = Math.min(99, 72 + Math.floor(aiHash(seed, tier, 2) * 23) + AI_TRAIN.swagger());
+    // what it states IS what it has: at 50% it is telling you it is guessing
+    var stated = Math.round(skill * 100);
     return {
-      hostile: saysHostile, stated: stated, tier: tier, right: right,
+      hostile: saysHostile, stated: stated, tier: tier, right: right, type: type,
       reason: c ? aiReason(tier, c, saysHostile, spoofed) : ''
     };
   }
@@ -3312,7 +3323,27 @@
      to show which way the closest contact lies. It hides itself once that
      contact is inside your field of view, because at that point the arrow is
      just clutter over the thing it was pointing at. */
-  /* ------------------------------------------------- guided breath, 6 s
+  /* Spoken cues for the breathing exercise. Output only — nothing listens,
+     nothing needs a permission prompt, and if the browser has no voice the
+     ring still carries the pace on its own. */
+  var SAY = {
+    ok: typeof window !== 'undefined' && !!window.speechSynthesis,
+    speak: function (text) {
+      if (!this.ok || !text) { return; }
+      try {
+        window.speechSynthesis.cancel();
+        var u = new SpeechSynthesisUtterance(text);
+        u.rate = 0.88; u.pitch = 0.92; u.volume = 1;
+        window.speechSynthesis.speak(u);
+      } catch (e) {}
+    },
+    hush: function () {
+      if (!this.ok) { return; }
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+  };
+
+  /* ------------------------------------------------- guided breath, 7 s
      Offered between waves and only when the pulse says it is worth offering.
      One breath, exhale longer than the inhale, because the lengthened exhale
      is the half that actually raises vagal tone and settles the rate. Six
@@ -3321,12 +3352,12 @@
   function breathSprite() { return spriteCanvas(512, 512); }
 
   var BREATHE = {
-    IN: 2.5, OUT: 3.5,
-    NEED: 0.50,               // only when the pulse is genuinely up
+    IN: 3, OUT: 4,            // seven seconds, exhale the longer half
+    OVER: 100,                // bpm above which it is offered at all
     active: false, t: 0, done: null, skipped: false,
 
     needed: function () {
-      return HR.live() && HR.stress() >= this.NEED;
+      return HR.live() && HR.bpm > this.OVER;
     },
 
     span: function () { return this.IN + this.OUT; },
@@ -3338,14 +3369,22 @@
       this.done = done || null;
       this.startStress = HR.stress();
       this._saidOut = false;
+      SAY.speak('Breathe in, slowly');
     },
 
     finish: function () {
       if (!this.active) { return; }
       this.active = false;
-      /* A real slow exhale does lower the rate, so this is allowed to help —
-         modestly, and only if they actually sat through it. */
-      if (!this.skipped) { HR.load = Math.max(0, HR.load * 0.72 - 0.04); }
+      if (this.skipped) {
+        SAY.hush();
+      } else {
+        /* A slow exhale really does settle the rate. On the simulated strap
+           we can show the whole of that: it returns to resting rather than
+           staying pinned, which is the point of having done it. */
+        HR.load = 0;
+        if (HR.sim) { HR.settle(); }
+        SAY.speak('Good. Back to it.');
+      }
       var cb = this.done; this.done = null;
       if (cb) { cb(); }
     },
@@ -3361,7 +3400,7 @@
       this.t += s;
       if (!this._saidOut && this.t >= this.IN) {
         this._saidOut = true;
-        // (the ring and the label carry the cue now)
+        SAY.speak('And out, longer');
       }
       if (this.t >= this.span()) { this.finish(); }
     },
@@ -3867,7 +3906,15 @@
       // roughly a quarter of contacts carry one lying sensor
       this.liar = -1;
       if (Math.random() < 0.28) {
-        var pool = [2, 3, 4, 4, 1];        // EO, ACU, RF, RF, RCS
+        /* Index into CUES, so it has to be derived from CUES — a hard-coded
+           pool pointed past the end of the list the moment the sensor set was
+           cut, and every spoofed contact threw on its first frame. The RF
+           squawk is the most valuable thing to fake, so weight it. */
+        var pool = [];
+        for (var q = 0; q < CUES.length; q++) {
+          pool.push(q);
+          if (CUES[q].key === 'XPDR') { pool.push(q); }
+        }
         this.liar = pool[Math.floor(Math.random() * pool.length)];
       }
       this.conflict = false;
@@ -4042,8 +4089,7 @@
         // each readout answers to its own switch
         this.iff.visible = !!VIEW.on.ring;
         this.dist.visible = !!VIEW.on.range;
-        var panelOn = VIEW.on.pct || VIEW.on.band || VIEW.on.speed || VIEW.on.size ||
-                      VIEW.on.profile || VIEW.on.emissn || VIEW.on.xpdr || VIEW.on.roe;
+        var panelOn = VIEW.on.speed || VIEW.on.size || VIEW.on.xpdr;
         this.evid.visible = !!panelOn;
         drawIff(this.iff, this, dist, this.track);
         this.iff.scale.set(ringSz, ringSz, 1);
@@ -4078,7 +4124,7 @@
         // the classifier's opinion, off to one side
         var tier = aiTier(dist);
         this.conflict = conflictVisible(this, dist);
-        var bucket = Math.round(AI_TRAIN.level * 8);
+        var bucket = Math.round(AI_TRAIN.of(this.data.type) * 20);
         var needs = !this.ai ? tier >= 0
                   : (this.ai.tier !== tier || this.ai.spoofed !== this.conflict
                      || this.ai.bucket !== bucket);
@@ -5080,11 +5126,9 @@
         '<p class="aarnote">' + this.verdictLine(t) + '</p>' +
         '<p class="aarcal">Judgement this run: <b>' + (this.calib > 0 ? '+' : '') + this.calib +
         '</b> &mdash; points earned on calls, not on kills.</p>' +
-        '<p class="aarcal">Classifier trained to <b>' + Math.round(AI_TRAIN.level * 100) +
-        '%</b> on ' + AI_TRAIN.right + ' good calls' +
-        (AI_TRAIN.wrong ? ' and ' + AI_TRAIN.wrong + ' bad ones' : '') +
-        '. It is genuinely sharper &mdash; and it now sounds ' + AI_TRAIN.swagger() +
-        ' points surer than it did, which is more than it earned.</p>' +
+        '<p class="aarcal">What the classifier knows, by type ' +
+        '&mdash; everything starts at 50%, a coin flip:</p>' +
+        '<div class="accrow">' + this.accuracyChips() + '</div>' +
         '<p class="aarnote">' + this.roeLine(t) + '</p>' +
         '</div>' + this.loadoutHTML();
       // each surface gets exactly one debrief: DOM on the flat screen,
@@ -5475,6 +5519,22 @@
       }
     },
 
+    /* Its accuracy per type, laid out so you can see which kinds of contact
+       it has actually been taught and which it is still guessing at. */
+    accuracyChips: function () {
+      var order = ['drone', 'missile', 'jet', 'usv', 'torpedo',
+                   'airliner', 'bird', 'fishing'];
+      var out = '';
+      for (var i = 0; i < order.length; i++) {
+        var k = order[i];
+        if (!TYPES[k]) { continue; }
+        var pctv = Math.round(AI_TRAIN.of(k) * 100);
+        var cls = pctv > 62 ? 'good' : (pctv < 38 ? 'bad' : 'flat');
+        out += '<span class="acc ' + cls + '"><b>' + pctv + '%</b>' + k + '</span>';
+      }
+      return out;
+    },
+
     verdictLine: function (t) {
       if (t.civilians > 0) {
         return t.trustedWrong >= t.civilians
@@ -5489,7 +5549,7 @@
       if (t.overrodeWrong > t.overrodeRight && t.overrodeWrong > 0) {
         return 'You overrode the classifier more often than you should have. When RF or optical have returned, it is worth listening to.';
       }
-      if (AI_TRAIN.level > 0.6 && t.trustedWrong > 0) {
+      if (AI_TRAIN.recompute() > 0.6 && t.trustedWrong > 0) {
         return 'The model is well trained now and it sounds it. That is the moment complacency sets in — ' +
                'its confidence has climbed further than its accuracy has.';
       }
@@ -5613,7 +5673,8 @@
        the threat, and making the player shoot them to advance would be the
        exact wrong incentive. */
     waveCleared: function () {
-      if (this.swarmsLeft > 0 || this.trickleLeft > 0) { return false; }
+      var owed = this.queue ? this.queue.length : this.trickleLeft;
+      if (this.swarmsLeft > 0 || owed > 0) { return false; }
       if (this.waveTime < 4) { return false; }
       for (var i = 0; i < this.live.length; i++) {
         var c = this.live[i].components.target;
@@ -5741,7 +5802,10 @@
          that was wrong is the most valuable thing you can do; following one
          into an error is the most costly. Agreeing when it was obviously
          right is worth very little — that is the easy case. */
-      AI_TRAIN.feed((action === 'engaged') === entry.hostile);
+      if (action === 'engaged') {
+        AI_TRAIN.feedKill(entry.type, entry.hostile);
+        AI_TRAIN.recompute();
+      }
 
       if (entry.ai !== null) {
         var believed = (action === 'engaged');
@@ -5956,6 +6020,9 @@
     types: TYPES,
     cues: CUES,
     cueValue: cueValue,
+    verdict: aiVerdict,
+    say: SAY,
+    tier: aiTier,
     roe: roeVerdict,
     quality: trackQuality,
     axes: ROE_AXES,
