@@ -377,6 +377,30 @@
   body.nohud #viewchips,
   body.nohud #lockhint { display: none !important; }
 
+  .readout.lives { border-left-color: var(--friend); }
+  .readout.lives .v { color: var(--friend); }
+  .readout.lives.low { border-left-color: var(--amber); }
+  .readout.lives.low .v { color: var(--amber); }
+  .readout.lives.crit { border-left-color: var(--alarm); }
+  .readout.lives.crit .v { color: var(--alarm); }
+
+  .endcard { text-align: center; padding: 8px 0 4px; }
+  .endcard h2 { font-size: 26px; margin: 0 0 4px; }
+  .endcard .verdict { font-family: "Saira", system-ui, sans-serif;
+                      font-size: 11px; font-weight: 700; letter-spacing: .18em;
+                      text-transform: uppercase; }
+  .endcard .verdict.win  { color: var(--friend); }
+  .endcard .verdict.lost { color: var(--alarm); }
+  .tally { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+           gap: 10px; margin: 16px 0 6px; }
+  .tally .t { border: 1px solid rgba(70,88,111,.45); border-radius: 4px; padding: 10px 8px; }
+  .tally .t b { display: block; font-size: 26px; font-family: "Saira", system-ui, sans-serif; }
+  .tally .t span { font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+                   color: var(--steel); }
+  .tally .t.big b { color: var(--cyan); }
+  .tally .t.bad b { color: var(--alarm); }
+  .tally .t.good b { color: var(--friend); }
+
   .accrow { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
   .acc { display: inline-flex; align-items: baseline; gap: 6px;
          font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px;
@@ -705,6 +729,7 @@
   <div id="hud">
     <div id="dials">
       <div class="readout">         <span class="k">Score</span>    <span class="v" id="rScore">0</span></div>
+      <div class="readout lives" id="livesDial"><span class="k">Lives</span> <span class="v" id="rLives">10</span></div>
       <div class="readout rockets"> <span class="k">Rockets</span>  <span class="v" id="rRock">6</span></div>
       <div class="readout harm">    <span class="k">Civilian</span> <span class="v" id="rCiv">0</span></div>
       <div class="readout calib" id="calibDial"><span class="k">Judgement</span> <span class="v" id="rCalib">0</span></div>
@@ -713,7 +738,7 @@
         <span class="sub" id="rModelSub">untrained</span>
         <span class="bar"><i id="rModelBar"></i></span>
       </div>
-      <div class="readout cool">    <span class="k">Wave</span>     <span class="v" id="rWave">1</span></div>
+      <div class="readout cool">    <span class="k">Level</span>    <span class="v" id="rWave">1</span></div>
       <div class="readout hr" id="hrDial"><span class="k">Heart</span>
         <span class="v" id="rBpm">--</span>
         <span class="sub" id="rStress">no strap</span>
@@ -4597,6 +4622,8 @@
 
   /* --------------------------------------------------------------- game */
   var ROCKET_SPARES = 3;      // on top of one per contact only a rocket can kill
+  var LIVES = 10;             // and only a hostile reaching you takes one
+  var LAST_LEVEL = 5;         // the run is five levels, then it is over
   var SHOTGUN_RANGE = 12;
   var SHOTGUN_DEG = 9;
   var BLAST_RADIUS = 5;
@@ -4631,6 +4658,8 @@
       this.running = false;
       this.score = 0;
       this.civilian = 0;
+      this.lives = LIVES;
+      this.over = false;
       this.mistakes = 0;
       this.lastMistakes = 0;
       this.kills = 0;
@@ -4664,6 +4693,7 @@
       this.elCiv = document.getElementById('rCiv');
       this.elWave = document.getElementById('rWave');
       this.elCalib = document.getElementById('rCalib');
+      this.elLives = document.getElementById('rLives');
       this.calibDial = document.getElementById('calibDial');
       this.elModel = document.getElementById('rModel');
       this.elModelSub = document.getElementById('rModelSub');
@@ -5209,10 +5239,25 @@
       this.drop(el);
     },
 
+    /* The only thing that costs a life. Missing costs points and pulse; a bad
+       call costs points and judgement; neither costs a life. A threat that
+       actually reaches you does. */
     reached: function (el) {
       this.record(el, 'reached');
+      var c = el.components.target;
       sfx.leak();
       this.penalise(-8, 'Target reached you', 0.5);
+
+      if (c && c.hostile) {
+        this.lives = Math.max(0, this.lives - 1);
+        this.paint();
+        if (this.lives <= 0) {
+          this.drop(el);
+          this.endRun(false);
+          return;
+        }
+        this.say(this.lives + ' live' + (this.lives === 1 ? '' : 's') + ' left');
+      }
       this.drop(el);
     },
 
@@ -5374,6 +5419,7 @@
       this.waveTime = 0;
       // armWave is about to clear the counter, so keep what the wave cost
       this.lastMistakes = this.mistakes || 0;
+      if (this.wave >= LAST_LEVEL) { this.endRun(true); return; }
       this.wave++;
       this.armWave();
       sfx.wave();
@@ -6014,6 +6060,131 @@
        accumulated goes: the score, the log the debrief reads from, what the
        classifier was taught, the feeds you paid for and the rules you wrote.
        Anything left behind would make the next run quietly not a fresh one. */
+    /* The run ends two ways: five levels flown, or ten lives spent. Both land
+       here, because both deserve the same accounting — a run you survived
+       badly is not obviously better than one you lost carefully. */
+    endRun: function (won) {
+      if (this.over) { return; }
+      this.over = true;
+      this.running = false;
+      this.paused = true;
+      this.loOn = false;
+      BREATHE.active = false;
+      Music.duck(false);
+      this.freeMouse();
+
+      var i;
+      for (i = this.live.length - 1; i >= 0; i--) { this.drop(this.live[i]); }
+      this.live = [];
+
+      var t = this.tally(this.log);
+      // lives left are worth something: surviving IS part of the score
+      var bonus = this.lives * 25;
+      var total = this.score + this.calib + bonus;
+
+      var host = document.getElementById('aar');
+      var html = '<div class="aarcard endcard">' +
+        '<p class="verdict ' + (won ? 'win' : 'lost') + '">' +
+        (won ? 'Run complete \u00b7 five levels flown'
+             : 'Run over \u00b7 out of lives') + '</p>' +
+        '<h2>' + total + '</h2>' +
+        '<p class="aarlede">' + this.endLine(won, t) + '</p>' +
+        '<div class="tally">' +
+          '<div class="t big"><b>' + this.score + '</b><span>engagement</span></div>' +
+          '<div class="t ' + (this.calib >= 0 ? 'good' : 'bad') + '"><b>' +
+            (this.calib > 0 ? '+' : '') + this.calib + '</b><span>judgement</span></div>' +
+          '<div class="t ' + (this.lives > 3 ? 'good' : 'bad') + '"><b>' + this.lives +
+            '</b><span>lives left</span></div>' +
+          '<div class="t"><b>+' + bonus + '</b><span>survival bonus</span></div>' +
+          '<div class="t ' + (this.civilian ? 'bad' : 'good') + '"><b>' + this.civilian +
+            '</b><span>civilians lost</span></div>' +
+          '<div class="t"><b>' + (won ? LAST_LEVEL : this.wave) + '</b><span>of ' +
+            LAST_LEVEL + ' levels</span></div>' +
+        '</div>' +
+        '<p class="aarcal">What the classifier ended up knowing, by type:</p>' +
+        '<div class="accrow">' + this.accuracyChips() + '</div>' +
+        '<p class="aarnote">' + this.roeLine(t) + '</p>' +
+        '<div class="gorow"><button class="go" id="endAgain">Fly it again</button></div>' +
+        '</div>';
+      host.innerHTML = html;
+      if (!(this.el.is && this.el.is('vr-mode'))) { host.classList.add('show'); }
+
+      var self = this;
+      var again = document.getElementById('endAgain');
+      if (again) { again.addEventListener('click', function () { self.restartRun(); }); }
+      this._aarKey = function (e) { if (e.key === 'Enter') { self.restartRun(); } };
+      window.addEventListener('keydown', this._aarKey);
+      this.hands.forEach(function (h) {
+        if (h) { h.addEventListener('triggerdown', self._aarVR = function () { self.restartRun(); }); }
+      });
+      // each surface gets exactly one end card, or the world panel reads
+      // through the DOM one on the flat screen
+      if (this.el.is && this.el.is('vr-mode')) { this.drawEndPanel(won, total); }
+      else {
+        var lp = document.getElementById('loPanel');
+        if (lp) { lp.object3D.visible = false; }
+      }
+      sfx.wave();
+    },
+
+    endLine: function (won, t) {
+      if (!won) {
+        return this.civilian > 0
+          ? 'Ten hits taken, and ' + this.civilian + ' civilian' +
+            (this.civilian === 1 ? '' : 's') + ' lost on the way. Both halves of the ' +
+            'job went wrong, and they are different failures.'
+          : 'Ten hits taken. Nothing civilian was lost, which counts for a great ' +
+            'deal \u2014 but a threat that reaches you is a threat you did not read in time.';
+      }
+      if (this.civilian === 0 && this.lives === LIVES) {
+        return 'Five levels, nothing through, nothing civilian lost. That is the whole job.';
+      }
+      if (this.civilian === 0) {
+        return 'Five levels with no civilian losses. ' + (LIVES - this.lives) +
+               ' got through to you, which is a reading problem rather than a judgement one.';
+      }
+      return 'Five levels flown, but ' + this.civilian + ' civilian contact' +
+             (this.civilian === 1 ? '' : 's') + ' went down. Survival and judgement are ' +
+             'scored apart here for a reason.';
+    },
+
+    /* the headset gets the same numbers on the world panel */
+    drawEndPanel: function (won, total) {
+      var el = document.getElementById('loPanel');
+      if (!el || !el.components['lo-panel']) { return; }
+      var c = el.components['lo-panel'];
+      this.placeLoPanel();
+      var x = c.ctx;
+      x.clearRect(0, 0, LO.W, LO.H);
+      x.fillStyle = 'rgba(4,9,15,0.96)';
+      x.fillRect(0, 0, LO.W, LO.H);
+      x.strokeStyle = won ? 'rgba(95,217,139,0.5)' : 'rgba(255,77,61,0.5)';
+      x.lineWidth = 4; x.strokeRect(3, 3, LO.W - 6, LO.H - 6);
+
+      x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.font = '700 30px "Saira", system-ui, sans-serif';
+      x.fillStyle = won ? '#5FD98B' : '#FF4D3D';
+      x.fillText(won ? 'RUN COMPLETE \u00b7 FIVE LEVELS FLOWN' : 'RUN OVER \u00b7 OUT OF LIVES',
+                 LO.W / 2, 150);
+
+      x.font = '800 150px "Saira", system-ui, sans-serif';
+      x.fillStyle = '#EAF3FB';
+      x.fillText(String(total), LO.W / 2, 330);
+
+      x.font = '600 28px "IBM Plex Mono", ui-monospace, monospace';
+      x.fillStyle = 'rgba(150,172,196,0.95)';
+      x.fillText('ENGAGEMENT ' + this.score + '    JUDGEMENT ' +
+                 (this.calib > 0 ? '+' : '') + this.calib +
+                 '    LIVES ' + this.lives + '/' + LIVES, LO.W / 2, 470);
+      x.fillText('CIVILIANS LOST ' + this.civilian, LO.W / 2, 520);
+
+      x.font = '700 34px "Saira", system-ui, sans-serif';
+      x.fillStyle = '#38B6F0';
+      x.fillText('\u25b6  PULL THE TRIGGER TO FLY IT AGAIN', LO.W / 2, LO.GO_Y);
+      c.tex.needsUpdate = true;
+      el.object3D.visible = true;
+    },
+
     restartRun: function () {
       var i;
       for (i = this.live.length - 1; i >= 0; i--) { this.drop(this.live[i]); }
@@ -6021,6 +6192,8 @@
 
       this.score = 0;
       this.civilian = 0;
+      this.lives = LIVES;
+      this.over = false;
       this.kills = 0;
       this.calib = 0;
       this.mistakes = 0;
@@ -6050,6 +6223,7 @@
 
       this.armWave();
       this.say('Run restarted \u2014 wave 1');
+      this.over = false;
       this._skipBreath = true;      // you asked to play, not to breathe
       this.resume();
     },
@@ -6313,6 +6487,14 @@
       if (this.elScore) { this.elScore.textContent = this.score; }
       if (this.elRock)  { this.elRock.textContent = this.rockets; }
       if (this.elCiv)   { this.elCiv.textContent = this.civilian; }
+      if (this.elLives) {
+        this.elLives.textContent = this.lives;
+        var ld = document.getElementById('livesDial');
+        if (ld) {
+          ld.classList.toggle('low', this.lives <= 5 && this.lives > 2);
+          ld.classList.toggle('crit', this.lives <= 2);
+        }
+      }
       // wave readout is driven by the clock in tick()
       if (this.elCalib) {
         this.elCalib.textContent = (this.calib > 0 ? '+' : '') + this.calib;
@@ -6455,7 +6637,7 @@
       else if (this.waveTime >= this.WAVE_LEN) { this.nextWave(); }
       if (this.elWave) {
         var left = Math.max(0, Math.ceil(this.WAVE_LEN - this.waveTime));
-        this.elWave.textContent = this.wave + ' \u00b7 ' +
+        this.elWave.textContent = this.wave + '/' + LAST_LEVEL + ' \u00b7 ' +
           Math.floor(left / 60) + ':' + ('0' + (left % 60)).slice(-2);
       }
       var cam = this.el.camera;
@@ -6470,6 +6652,7 @@
 
       this.autoHR();
       this.stepHud();
+      if (this.over) { return; }
       this.stepReach(time);
       this.stepArrow();
 
