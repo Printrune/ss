@@ -1586,9 +1586,19 @@
           if (!o.isMesh) { return; }
           /* Unlit: the colour is already baked per vertex, including haze.
              Lighting it again would only make the far hills swim. */
-          o.material = new THREE.MeshBasicMaterial({
-            vertexColors: true, fog: false
-          });
+          var src = o.material;
+          var map = src && src.map ? src.map : null;
+          if (map) {
+            /* Colour, sunlight and haze are all baked into the texture, so the
+               scene's own lights must not touch it a second time. */
+            if ('colorSpace' in map) { map.colorSpace = THREE.SRGBColorSpace; }
+            map.anisotropy = 4;
+            map.generateMipmaps = true;
+            map.minFilter = THREE.LinearMipmapLinearFilter;
+            map.needsUpdate = true;
+          }
+          o.material = new THREE.MeshBasicMaterial(
+            map ? { map: map, fog: false } : { vertexColors: true, fog: false });
           o.frustumCulled = false;
           o.renderOrder = -800;
         });
