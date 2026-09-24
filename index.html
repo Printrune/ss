@@ -725,7 +725,7 @@
     <a-entity id="ship" warship hide-on-enter-ar></a-entity>
     <a-entity id="loPanel" lo-panel></a-entity>
 
-    <a-entity id="rig" position="0 16 0">
+    <a-entity id="rig" position="0 16 0" ar-stand>
       <a-entity id="cam" camera="far: 200000; near: 0.05" look-controls="pointerLockEnabled: true" position="0 1.6 0" desktop-gun>
         <a-entity id="visor" position="0 0 -0.32" visor-flash></a-entity>
         <a-entity id="aarPanel" position="0 0 -1.45" aar-panel></a-entity>
@@ -1602,7 +1602,7 @@
      The public feeds send no CORS header, so this talks to a small relay
      (worker.js) rather than to them directly. */
   var LIVE = {
-    on: false, url: null, at: [47.6025, -122.4200], nm: 60,
+    on: false, url: null, at: [47.6025, -122.4200], nm: 250,
     note: 'off', count: 0, source: null, lastOk: 0, tried: 0
   };
 
@@ -1617,7 +1617,7 @@
     if (at && /^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(at)) {
       LIVE.at = at.split(',').map(Number);
     }
-    if (q.get('nm')) { LIVE.nm = Math.min(250, Math.max(5, +q.get('nm') || 60)); }
+    if (q.get('nm')) { LIVE.nm = Math.min(500, Math.max(5, +q.get('nm') || 250)); }
     if (feed) { LIVE.url = feed; LIVE.on = true; LIVE.note = 'waiting'; }
   }());
 
@@ -1693,9 +1693,13 @@
 
     apply: function (list) {
       var self = this, seen = {};
+      /* Airborne only — a quarter of a busy feed is parked on taxiways —
+         and nearest first, because those are the ones you can actually pick
+         out of the sky. */
       var good = list.filter(function (a) {
         return a.hex && a.dst > 0 && a.altFt > 300 && a.seen < 60;
-      }).slice(0, 12);                    // a busy sky must not swamp the round
+      }).sort(function (x, y) { return x.dst - y.dst; })
+        .slice(0, 30);
       LIVE.count = good.length;
 
       good.forEach(function (a) {
@@ -2161,6 +2165,26 @@
      a frigate. Everything is laid out so it never blocks the sky you have to
      watch: the superstructure and mast sit ABAFT of where you stand, the bow
      runs away forward, and the railings are low enough to see over. */
+  /* How far above the floor a contact may never come below, in the room. */
+  var AR_CEILING_CLEAR = 2.2;
+
+  /* The rig is parked on the warship's watch platform. In passthrough there
+     is no warship and the floor is the floor, so it has to come down or the
+     player floats sixteen metres up and the whole sky arrives beneath them. */
+  AFRAME.registerComponent('ar-stand', {
+    init: function () {
+      var el = this.el, sc = el.sceneEl, home = el.getAttribute('position');
+      this.home = { x: home.x, y: home.y, z: home.z };
+      var self = this;
+      sc.addEventListener('enter-vr', function () {
+        if (sc.is('ar-mode')) { el.object3D.position.set(0, 0, 0); }
+      });
+      sc.addEventListener('exit-vr', function () {
+        el.object3D.position.set(self.home.x, self.home.y, self.home.z);
+      });
+    }
+  });
+
   var DECK_Y  = 4.6;         // deck above the waterline
   var TOWER_Y = 16.0;        // the watch platform: the highest thing on the ship
 
@@ -5008,6 +5032,14 @@
       this.phase += s * (this.data.type === 'bird' ? 9 : 2.6);
       o.position.y = this.baseY + Math.sin(this.phase) * this.bob;
 
+      /* In the room, nothing is allowed to come out of the floor. The
+         altitudes were written for a player standing on a tower 16 m up; on
+         the real floor the same numbers put contacts underfoot. */
+      if (this.el.sceneEl.is('ar-mode')) {
+        var minY = (typeof ROOM !== 'undefined' ? ROOM.floorY : 0) + AR_CEILING_CLEAR;
+        if (o.position.y < minY) { o.position.y = minY; this.baseY = minY; }
+      }
+
       if (this.built.rotors) {
         for (var i = 0; i < this.built.rotors.length; i++) {
           this.built.rotors[i].rotation.y += this.spin * s * (i % 2 ? -1 : 1);
@@ -7056,7 +7088,8 @@
       }
       if (!best) { return; }
       // on that wall, nearest point to where the contact actually crossed
-      var c = new THREE.Vector3(p.x, Math.max(ROOM.floorY + 0.9, Math.min(p.y, ROOM.ceilY - 0.4 || p.y)), p.z);
+      var c = new THREE.Vector3(p.x,
+        Math.max(ROOM.floorY + AR_CEILING_CLEAR, Math.min(p.y, ROOM.ceilY - 0.4 || p.y)), p.z);
       var toWall = new THREE.Vector3().subVectors(c, best.c);
       var along = toWall.dot(best.n);
       c.addScaledVector(best.n, -along);            // drop it onto the wall plane
@@ -7087,7 +7120,7 @@
         var jx = (Math.random() - 0.5) * Math.min(1.2, ap.w || 0.8);
         var jy = (Math.random() - 0.5) * Math.min(0.9, ap.h || 0.8);
         pos = { x: ap.c.x + ap.n.x * back + jx,
-                y: Math.max(ROOM.floorY + 0.5, ap.c.y + jy),
+                y: Math.max(ROOM.floorY + AR_CEILING_CLEAR, ap.c.y + Math.abs(jy)),
                 z: ap.c.z + ap.n.z * back };
       }
       el.setAttribute('position', pos);

@@ -29,6 +29,20 @@ const HEADERS = {
   'Content-Type': 'application/json; charset=utf-8'
 };
 
+/* Great-circle range and bearing, so a tiled answer still reports the
+   distance and direction from where the player actually stands. */
+function geo(lat1, lon1, lat2, lon2) {
+  if (!Number.isFinite(lat2) || !Number.isFinite(lon2)) { return null; }
+  const R = 3440.065;                              // nautical miles
+  const r = Math.PI / 180;
+  const p1 = lat1 * r, p2 = lat2 * r, dp = (lat2 - lat1) * r, dl = (lon2 - lon1) * r;
+  const a = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  const nm = 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return { nm, deg: (Math.atan2(y, x) / r + 360) % 360 };
+}
+
 function num(v, lo, hi, dflt) {
   const n = parseFloat(v);
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
@@ -64,16 +78,55 @@ export default {
     const u = new URL(request.url);
     const lat  = num(u.searchParams.get('lat'),  -90,  90,  47.6025);
     const lon  = num(u.searchParams.get('lon'), -180, 180, -122.4200);
-    const dist = Math.round(num(u.searchParams.get('dist'), 1, 250, 60));
+    const dist = Math.round(num(u.searchParams.get('dist'), 1, 500, 250));
 
     const key = new Request(`https://relay/${lat},${lon},${dist}`, request);
     const cache = caches.default;
     const hit = await cache.match(key);
     if (hit) { return hit; }
 
+    /* The upstreams cap a single query at 250 nm. Past that we tile: the
+       centre plus a ring of six, which reaches about 500 nm (925 km). Worth
+       knowing before you ask for more — an airliner at 11 km is below your
+       horizon beyond roughly 400 km, so the extra range is a scope picture,
+       not something you could ever look up and see. */
+    const tiles = [[lat, lon, Math.min(250, dist)]];
+    if (dist > 250) {
+      const ringNm = Math.min(250, dist - 250);
+      for (let i = 0; i < 6; i++) {
+        const br = (i * 60) * Math.PI / 180;
+        const dLat = (ringNm / 60) * Math.cos(br);
+        const dLon = (ringNm / 60) * Math.sin(br) / Math.cos(lat * Math.PI / 180);
+        tiles.push([lat + dLat, lon + dLon, 250]);
+      }
+    }
+
     let out = null, used = null, why = [];
     for (const s of SOURCES) {
       try {
+        if (tiles.length > 1) {
+          const parts = await Promise.all(tiles.map(([la, lo, d]) =>
+            fetch(s.url(la.toFixed(4), lo.toFixed(4), d), {
+              headers: { 'Accept': 'application/json', 'User-Agent': 'sentraspere-relay' },
+              cf: { cacheTtl: 60, cacheEverything: true }
+            }).then(r => r.ok ? r.json() : null)['catch'](() => null)));
+          const seen = new Map();
+          for (const j of parts) {
+            if (!j) { continue; }
+            for (const a of (s.list(j) || [])) {
+              if (!a.hex || seen.has(a.hex)) { continue; }
+              const t = tidy(a);
+              // distance and bearing must be from where the PLAYER is,
+              // not from whichever tile happened to catch the aircraft
+              const d = geo(lat, lon, a.lat, a.lon);
+              if (!d || d.nm > dist) { continue; }
+              t.dst = d.nm; t.dir = d.deg;
+              seen.set(a.hex, t);
+            }
+          }
+          if (seen.size) { out = [...seen.values()]; used = s.name + ' x' + tiles.length; break; }
+          why.push(`${s.name}:empty-tiles`); continue;
+        }
         const r = await fetch(s.url(lat, lon, dist), {
           headers: { 'Accept': 'application/json', 'User-Agent': 'sentraspere-relay' },
           cf: { cacheTtl: CACHE_SECONDS, cacheEverything: true }
