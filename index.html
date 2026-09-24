@@ -719,6 +719,7 @@
               sky-dome hide-on-enter-ar></a-entity>
     <a-entity id="arfloor" ar-floor-rings></a-entity>
     <a-entity id="arbreach" breach-marks></a-entity>
+    <a-entity id="liveair" live-air></a-entity>
     <a-entity id="land" puget-terrain hide-on-enter-ar></a-entity>
     <a-entity id="floor" rotation="-90 0 0" range-floor hide-on-enter-ar></a-entity>
     <a-entity id="ship" warship hide-on-enter-ar></a-entity>
@@ -1009,7 +1010,7 @@
       var fine = !(window.matchMedia &&
                    window.matchMedia('(any-pointer: fine)').matches === false);
       if (!fine) { return; }          // touch screen: never capture the pointer
-      if (sc && sc.canvas && sc.canvas.requestPointerLock && !(sc.is && sc.is('vr-mode'))) {
+      if (sc && sc.canvas && sc.canvas.requestPointerLock && !(sc.is && (sc.is('vr-mode') || sc.is('ar-mode')))) {
         try { sc.canvas.requestPointerLock(); } catch (e) {}
       }
     }, 60);
@@ -1590,6 +1591,180 @@
   function isFloor(l)  { return /^floor/.test(l); }
   function isCeil(l)   { return /^ceil/.test(l); }
 
+  /* ================================================== real aircraft overhead
+     Everything else in this game is invented. This is not: each of these is
+     an aeroplane that is in the air right now, carrying its own transponder
+     code, its own type, its own speed. They are always civilian — the thing
+     you must not shoot — which is both the honest design and the only
+     defensible one. Bearing and elevation are true; only range is compressed,
+     so in passthrough a contact sits where the real aircraft actually is.
+
+     The public feeds send no CORS header, so this talks to a small relay
+     (worker.js) rather than to them directly. */
+  var LIVE = {
+    on: false, url: null, at: [47.6025, -122.4200], nm: 60,
+    note: 'off', count: 0, source: null, lastOk: 0, tried: 0
+  };
+
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var feed = q.get('feed');
+    try {
+      if (feed) { localStorage.setItem('sentraFeed', feed); }
+      else { feed = localStorage.getItem('sentraFeed'); }
+    } catch (e) { /* private window: just use the query string */ }
+    var at = q.get('at');
+    if (at && /^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(at)) {
+      LIVE.at = at.split(',').map(Number);
+    }
+    if (q.get('nm')) { LIVE.nm = Math.min(250, Math.max(5, +q.get('nm') || 60)); }
+    if (feed) { LIVE.url = feed; LIVE.on = true; LIVE.note = 'waiting'; }
+  }());
+
+  /* Emitter category -> something to draw and a size to report. */
+  function liveShape(a) {
+    var c = (a.cat || '').toUpperCase();
+    if (c === 'A7')  { return { model: 'drone',    span: 14, what: 'ROTORCRAFT' }; }
+    if (c === 'B6')  { return { model: 'drone',    span: 3,  what: 'UAV' }; }
+    if (c === 'A1' || c === 'B1' || c === 'B2' || c === 'B4') {
+      return { model: 'bird', span: 11, what: 'LIGHT' };
+    }
+    if (c === 'A5' || c === 'A4') { return { model: 'airliner', span: 64, what: 'HEAVY' }; }
+    if (c === 'A2')  { return { model: 'bird',     span: 20, what: 'SMALL' }; }
+    return { model: 'airliner', span: 36, what: 'LARGE' };
+  }
+
+  AFRAME.registerComponent('live-air', {
+    init: function () {
+      this.byHex = {};
+      this.since = 1e9;                  // fetch on the first tick
+      this.busy = false;
+      if (!LIVE.on) { return; }
+      // last good answer, kept so a dead network at the venue still shows
+      // the traffic that was overhead when it was alive
+      try {
+        var raw = localStorage.getItem('sentraAirCache');
+        if (raw) { this.cached = JSON.parse(raw); }
+      } catch (e) { this.cached = null; }
+    },
+
+    tick: function (t, dt) {
+      try { this.step(dt); } catch (e) { LIVE.note = 'live error: ' + (e.message || e); }
+    },
+
+    step: function (dt) {
+      if (!LIVE.on) { return; }
+      this.since += (dt || 16);
+      if (this.since > 5000 && !this.busy) { this.since = 0; this.pull(); }
+      this.glide(dt);
+    },
+
+    pull: function () {
+      var self = this;
+      this.busy = true; LIVE.tried++;
+      var u = LIVE.url + (LIVE.url.indexOf('?') === -1 ? '?' : '&') +
+              'lat=' + LIVE.at[0] + '&lon=' + LIVE.at[1] + '&dist=' + LIVE.nm;
+      fetch(u, { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          self.busy = false;
+          if (!j || !j.ok || !j.aircraft) {
+            LIVE.note = 'relay said no'; self.replay(); return;
+          }
+          LIVE.source = j.source; LIVE.lastOk = Date.now();
+          LIVE.note = 'live · ' + j.source;
+          try { localStorage.setItem('sentraAirCache', JSON.stringify(j)); } catch (e) {}
+          self.cached = j;
+          self.apply(j.aircraft);
+        })
+        ['catch'](function (e) {
+          self.busy = false;
+          LIVE.note = 'no relay (' + (e.message || 'blocked') + ')';
+          self.replay();
+        });
+    },
+
+    /* Network gone. Show what was overhead last time it worked, and say so. */
+    replay: function () {
+      if (!this.cached || !this.cached.aircraft) { return; }
+      LIVE.note = 'cached · ' + new Date(this.cached.now).toLocaleTimeString();
+      this.apply(this.cached.aircraft);
+    },
+
+    apply: function (list) {
+      var self = this, seen = {};
+      var good = list.filter(function (a) {
+        return a.hex && a.dst > 0 && a.altFt > 300 && a.seen < 60;
+      }).slice(0, 12);                    // a busy sky must not swamp the round
+      LIVE.count = good.length;
+
+      good.forEach(function (a) {
+        seen[a.hex] = true;
+        var e = self.byHex[a.hex];
+        if (!e) { e = self.make(a); if (!e) { return; } self.byHex[a.hex] = e; }
+        self.aim(e, a);
+      });
+      Object.keys(this.byHex).forEach(function (hex) {
+        if (seen[hex]) { return; }
+        var e = self.byHex[hex];
+        delete self.byHex[hex];
+        var g = self.el.components.game || (window.DroneRange && window.DroneRange.game());
+        if (g && g.drop) { g.drop(e); } else if (e.parentNode) { e.parentNode.removeChild(e); }
+      });
+    },
+
+    make: function (a) {
+      var g = window.DroneRange && window.DroneRange.game();
+      if (!g) { return null; }
+      var sh = liveShape(a);
+      var el = document.createElement('a-entity');
+      el.setAttribute('class', 'target');
+      el.setAttribute('position', this.place(a));
+      el.setAttribute('target', { type: sh.model, speed: 0.1, hostile: false });
+      this.el.appendChild(el);
+      g.live.push(el);
+      setTimeout(function () {
+        var c = el.components && el.components.target;
+        if (!c) { return; }
+        c.live = a;                 // the real record, read by the readouts
+        c.liveShape = sh;
+        c.hostile = false;
+        c.frozen = true;            // the feed moves it, not the game's autopilot
+      }, 0);
+      return el;
+    },
+
+    /* True bearing and true elevation, range squeezed into the play volume. */
+    place: function (a) {
+      var far = Math.max(1, LIVE.nm);
+      var k = Math.min(1, a.dst / far);
+      var R = 28 + k * 30;
+      var alt = a.altFt * 0.3048, dm = a.dst * 1852;
+      var el = Math.atan2(alt, Math.max(1, dm));
+      var br = a.dir * Math.PI / 180;
+      return { x: Math.sin(br) * R,
+               y: Math.max(6, Math.min(42, R * Math.tan(el))),
+               z: -Math.cos(br) * R };
+    },
+
+    aim: function (e, a) {
+      e.__want = this.place(a);
+      var c = e.components && e.components.target;
+      if (c) { c.live = a; }
+    },
+
+    /* Five seconds between fixes would read as teleporting, so slide. */
+    glide: function (dt) {
+      var f = Math.min(1, (dt || 16) / 900);
+      Object.keys(this.byHex).forEach(function (hex) {
+        var e = this.byHex[hex];
+        if (!e || !e.__want || !e.object3D) { return; }
+        var p = e.object3D.position, w = e.__want;
+        p.x += (w.x - p.x) * f; p.y += (w.y - p.y) * f; p.z += (w.z - p.z) * f;
+      }, this);
+    }
+  });
+
   AFRAME.registerComponent('room-sense', {
     init: function () {
       var self = this;
@@ -1602,6 +1777,11 @@
     },
 
     tick: function (t, dt) {
+      try { this.look(t, dt); }
+      catch (e) { ROOM.note = 'scan error: ' + (e && e.message ? e.message : e); }
+    },
+
+    look: function (t, dt) {
       if (!this.el.is('ar-mode')) { return; }
       this.since += (dt || 16);
       // Meta asks for two to three seconds before deciding the room is empty
@@ -1611,10 +1791,16 @@
       var ref = r && r.xr && r.xr.getReferenceSpace && r.xr.getReferenceSpace();
       if (!frame || !ref) { ROOM.note = 'no frame'; return; }
 
-      var planes = frame.detectedPlanes, meshes = frame.detectedMeshes;
+      /* detectedPlanes THROWS if the session was never granted plane
+         detection — and an exception in a scene tick stops every component
+         registered after it, which would quietly freeze the whole game the
+         moment you entered AR. Nothing in here is allowed to escape. */
+      var planes = null, meshes = null;
+      try { planes = frame.detectedPlanes; } catch (e) { planes = null; }
+      try { meshes = frame.detectedMeshes; } catch (e) { meshes = null; }
       ROOM.meshCount = meshes ? meshes.size : 0;
       if (!planes) {
-        ROOM.note = 'this headset reports no plane detection';
+        ROOM.note = 'room data not granted';
         ROOM.ready = true; ROOM.scanned = false; return;
       }
       ROOM.planeCount = planes.size;
@@ -1714,6 +1900,10 @@
     },
 
     tick: function (time) {
+      try { this.mark(time); } catch (e) {}
+    },
+
+    mark: function (time) {
       if (!this.el.sceneEl.is('ar-mode')) { this.g.visible = false; return; }
       this.g.visible = true;
       while (this.made < ROOM.breaches.length) {
@@ -1740,12 +1930,12 @@
   AFRAME.registerComponent('room-report', {
     init: function () {
       var cv = document.createElement('canvas');
-      cv.width = 512; cv.height = 340;
+      cv.width = 512; cv.height = 560;
       this.cv = cv; this.ctx = cv.getContext('2d');
       this.tex = new THREE.CanvasTexture(cv);
       if ('colorSpace' in this.tex) { this.tex.colorSpace = THREE.SRGBColorSpace; }
       var m = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.34, 0.226),
+        new THREE.PlaneGeometry(0.34, 0.372),
         new THREE.MeshBasicMaterial({ map: this.tex, transparent: true,
                                       depthTest: false, fog: false }));
       m.renderOrder = 900;
@@ -1755,7 +1945,7 @@
     },
 
     paint: function () {
-      var g = this.ctx, W = 512, H = 340;
+      var g = this.ctx, W = 512, H = 560;
       g.clearRect(0, 0, W, H);
       g.fillStyle = 'rgba(8,13,20,.88)'; g.fillRect(0, 0, W, H);
       g.strokeStyle = 'rgba(120,146,174,.55)'; g.lineWidth = 2;
@@ -1782,7 +1972,35 @@
         y += 25;
       }
 
-      y += 8;
+      y += 6;
+      g.strokeStyle = 'rgba(120,146,174,.3)';
+      g.beginPath(); g.moveTo(18, y - 12); g.lineTo(494, y - 12); g.stroke();
+      var G = (window.DroneRange && window.DroneRange.game) ? window.DroneRange.game() : null;
+      if (G) {
+        var alive = 0, host = 0, i;
+        for (i = 0; i < (G.live || []).length; i++) {
+          var cc = G.live[i].components && G.live[i].components.target;
+          alive++; if (cc && cc.hostile) { host++; }
+        }
+        var cleared = '?';
+        try { cleared = G.waveCleared() ? 'yes' : 'no'; } catch (e) { cleared = 'err'; }
+        var wl = [
+          ['round', 'L' + G.wave + '   t ' + Math.round(G.waveTime || 0) + 's   lives ' + G.lives],
+          ['in air', alive + ' (' + host + ' hostile)'],
+          ['owed', 'queue ' + ((G.queue || []).length) + '   swarms ' + G.swarmsLeft],
+          ['clear?', cleared + '   between-rounds ' + (G.loOn ? 'UP' : 'no')]
+        ];
+        for (i = 0; i < wl.length; i++) {
+          g.fillStyle = 'rgba(150,172,196,.75)'; g.fillText(wl[i][0], 18, y);
+          g.fillStyle = '#9FE8B0'; g.fillText(wl[i][1], 150, y);
+          y += 25;
+        }
+        y += 6;
+      }
+      g.fillStyle = 'rgba(150,172,196,.75)'; g.fillText('live air', 18, y);
+      g.fillStyle = LIVE.on ? '#7FD4FF' : 'rgba(150,172,196,.55)';
+      g.fillText(LIVE.note + (LIVE.on ? '   ' + LIVE.count + ' up' : ''), 150, y);
+      y += 31;
       g.fillStyle = 'rgba(150,172,196,.75)';
       g.fillText('labels seen', 18, y); y += 24;
       g.fillStyle = '#FFD79A';
@@ -1801,6 +2019,10 @@
     },
 
     tick: function () {
+      try { this.refresh(); } catch (e) {}
+    },
+
+    refresh: function () {
       if (!this.el.sceneEl.is('ar-mode')) {
         this.el.object3D.visible = false; return;
       }
@@ -1808,7 +2030,9 @@
       var sig = ROOM.planeCount + '|' + ROOM.walls.length + '|' + ROOM.doors.length +
                 '|' + ROOM.windows.length + '|' + ROOM.breaches.length + '|' + ROOM.note +
                 '|' + Object.keys(ROOM.labels).length;
-      if (sig !== this.last) { this.last = sig; this.paint(); }
+      if (sig !== this.last) { this.last = sig; this.paint(); return; }
+      this.ago = (this.ago || 0) + 1;
+      if (this.ago > 30) { this.ago = 0; this.paint(); }   // ~ twice a second
     }
   });
 
@@ -1830,6 +2054,10 @@
       this.g = g;
     },
     tick: function () {
+      try { this.place(); } catch (e) {}
+    },
+
+    place: function () {
       var on = this.el.sceneEl.is('ar-mode');
       this.g.visible = on && !window.__hudOff;
       if (on) { this.g.position.y = ROOM.floorY + 0.01; }
@@ -3774,9 +4002,21 @@
   };
 
   function cueValue(key, c, idx) {
-    if (c.liar === idx && c.liar >= 0) {
+    if (c.liar === idx && c.liar >= 0 && !c.live) {
       // the lying sensor reports what the opposite allegiance would
       return LIE[key][c.hostile ? 'hostile' : 'friendly'];
+    }
+    /* If this contact is an aircraft that is actually in the air right now,
+       every one of these is its own reported value, not a number from a
+       table. The transponder field in particular is a real squawk. */
+    if (c.live) {
+      var L = c.live, sp = c.liveShape || { span: 36, what: 'LARGE' };
+      if (key === 'SPEED') { return (L.gs * 0.5144).toFixed(1) + ' m/s'; }
+      if (key === 'SIZE')  { return sp.span.toFixed(1) + ' m'; }
+      if (key === 'PROFILE') { return L.type || sp.what; }
+      if (key === 'EMISSN')  { return sp.what; }
+      return L.squawk ? (L.mil ? 'MIL ' : 'CIVIL ') + L.squawk
+                      : (L.call || L.hex || 'CIVIL');
     }
     var sig = SIGNATURE[c.data.type] || SIGNATURE.drone;
     if (key === 'SPEED')   { return c.data.speed.toFixed(1) + ' m/s'; }
@@ -4722,6 +4962,9 @@
     },
     tick: function (time, dt) {
       if (!this.alive || !dt) { return; }
+      /* Real aircraft are moved by the feed. Letting the autopilot fly them
+         would be the one thing that made them not real. */
+      if (this.frozen) { return; }
       var s = Math.min(dt, 60) / 1000;
       var o = this.el.object3D;
       var game = this.el.sceneEl.components.game;
@@ -4914,7 +5157,7 @@
 
         cv.addEventListener('contextmenu', function (e) { e.preventDefault(); });
         cv.addEventListener('mousedown', function (e) {
-          if (sceneEl.is('vr-mode')) { return; }
+          if ((sceneEl.is('vr-mode') || sceneEl.is('ar-mode'))) { return; }
           var game = sceneEl.components.game;
           if (!game || !game.running) { return; }
           e.preventDefault();
@@ -4941,7 +5184,7 @@
         // capturing the pointer on a touch screen gains nothing and costs
         // every tap: the locked canvas receives them instead of the buttons
         if (!hasMouse()) { return; }
-        if (cv && cv.requestPointerLock && !sceneEl.is('vr-mode')) {
+        if (cv && cv.requestPointerLock && !(sceneEl.is('vr-mode') || sceneEl.is('ar-mode'))) {
           try { cv.requestPointerLock(); } catch (e) {}
         }
       }
@@ -5917,7 +6160,7 @@
         host0.innerHTML = '<div class="aarcard"><p class="eyebrow">Wave ' + wave +
           '</p><h2>Nothing resolved</h2><p class="aarlede">No contact was engaged or ' +
           'let through. Set up and go again.</p></div>' + this.loadoutHTML();
-        if (!(this.el.is && this.el.is('vr-mode'))) { host0.classList.add('show'); }
+        if (!(this.el.is && (this.el.is('vr-mode') || this.el.is('ar-mode')))) { host0.classList.add('show'); }
         var me = this;
         this.wireLoadout();
         this._aarKey = function (e) { if (e.key === 'Enter') { me.resume(); } };
@@ -5980,7 +6223,7 @@
         '</div>' + this.loadoutHTML();
       // each surface gets exactly one debrief: DOM on the flat screen,
       // the world panel in the headset
-      var inVR = this.el.is && this.el.is('vr-mode');
+      var inVR = this.el.is && (this.el.is('vr-mode') || this.el.is('ar-mode'));
       host.innerHTML = html;
       if (!inVR) { host.classList.add('show'); }
 
@@ -6378,6 +6621,7 @@
     },
 
     drawLoadoutPanel: function () {
+      this.painted = true;
       var el = document.getElementById('loPanel');
       if (!el) { return; }
       var c = el.components['lo-panel'];
@@ -6475,7 +6719,7 @@
     grabMouse: function () {
       if (!this.hadLock) { return; }
       var sc = this.el;
-      if (sc.is && sc.is('vr-mode')) { return; }
+      if (sc.is && (sc.is('vr-mode') || sc.is('ar-mode'))) { return; }
       var cv = sc.canvas;
       if (cv && cv.requestPointerLock) {
         try { cv.requestPointerLock(); } catch (e) {}
@@ -6533,7 +6777,7 @@
         '<div class="gorow"><button class="go" id="endAgain">Fly it again</button></div>' +
         '</div>';
       host.innerHTML = html;
-      if (!(this.el.is && this.el.is('vr-mode'))) { host.classList.add('show'); }
+      if (!(this.el.is && (this.el.is('vr-mode') || this.el.is('ar-mode')))) { host.classList.add('show'); }
 
       var self = this;
       var again = document.getElementById('endAgain');
@@ -6545,7 +6789,7 @@
       });
       // each surface gets exactly one end card, or the world panel reads
       // through the DOM one on the flat screen
-      if (this.el.is && this.el.is('vr-mode')) { this.drawEndPanel(won, total); }
+      if (this.el.is && (this.el.is('vr-mode') || this.el.is('ar-mode'))) { this.drawEndPanel(won, total); }
       else {
         var lp = document.getElementById('loPanel');
         if (lp) { lp.object3D.visible = false; }
@@ -6689,7 +6933,7 @@
       if (!this.aarPanel) { return; }
       var c = this.aarPanel.components['aar-panel'];
       if (c) { c.render(wave, rows, t, this.verdictLine(t)); }
-      this.aarPanel.object3D.visible = !!(this.el.is && this.el.is('vr-mode'));
+      this.aarPanel.object3D.visible = !!(this.el.is && (this.el.is('vr-mode') || this.el.is('ar-mode')));
     },
 
     /* --- spawning ------------------------------------------------------ */
@@ -7150,7 +7394,7 @@
      than with the scene. A slow repaint keeps the pill flashes expiring and
      the microphone state honest. */
   window.DroneRange = {
-    room: ROOM, pick: pickType, apertures: apertures,
+    room: ROOM, pick: pickType, apertures: apertures, live: LIVE,
     hr: HR,
     train: AI_TRAIN,
     music: Music,
