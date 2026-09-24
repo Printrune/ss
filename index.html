@@ -705,8 +705,10 @@
 <div id="stage">
   <a-scene
     embedded
-    vr-mode-ui="enterARButtonEnabled: false"
-    renderer="antialias: true; colorManagement: true; highRefreshRate: true; foveationLevel: 1"
+    xr-mode-ui="XRMode: xr"
+    webxr="optionalFeatures: plane-detection, mesh-detection, anchors, local-floor, hand-tracking"
+    room-sense
+    renderer="antialias: true; colorManagement: true; highRefreshRate: true; foveationLevel: 1; stencil: true"
     background="color: #03080E"
     game>
 
@@ -714,10 +716,12 @@
     <a-entity light="type: directional; color: #CFE6FA; intensity: 0.8" position="-4 8 3"></a-entity>
 
     <a-entity id="sky" geometry="primitive: sphere; radius: 400; segmentsWidth: 40; segmentsHeight: 24"
-              sky-dome></a-entity>
-    <a-entity id="land" puget-terrain></a-entity>
-    <a-entity id="floor" rotation="-90 0 0" range-floor></a-entity>
-    <a-entity id="ship" warship></a-entity>
+              sky-dome hide-on-enter-ar></a-entity>
+    <a-entity id="arfloor" ar-floor-rings></a-entity>
+    <a-entity id="arbreach" breach-marks></a-entity>
+    <a-entity id="land" puget-terrain hide-on-enter-ar></a-entity>
+    <a-entity id="floor" rotation="-90 0 0" range-floor hide-on-enter-ar></a-entity>
+    <a-entity id="ship" warship hide-on-enter-ar></a-entity>
     <a-entity id="loPanel" lo-panel></a-entity>
 
     <a-entity id="rig" position="0 16 0">
@@ -730,6 +734,7 @@
         <a-entity id="vrscore"  position="-0.30 -0.33 -0.95"
                   canvas-label="value: 0; label: SCORE; worldW: 0.2"></a-entity>
         <a-entity id="vrvitals" position="0 -0.52 -0.95" vitals="worldW: 0.26"></a-entity>
+        <a-entity id="roomrep" position="0.42 -0.10 -0.80" rotation="0 -22 0" room-report></a-entity>
         <a-entity id="vrrockets" position="0.30 -0.33 -0.95"
                   canvas-label="value: 6; label: ROCKETS; worldW: 0.2; tone: ice"></a-entity>
       </a-entity>
@@ -1552,6 +1557,284 @@
      an empty blue plane into a place. Falls back silently to open water if
      the mesh is not next to the page. */
   var SEA_NEAR = 0x0C1B2C, HAZE = 0x7E98AE;
+
+  /* ==================================================== reading the room
+     Passthrough only tells you what the room looks like; the geometry has to
+     be asked for. We read planes straight off the XRFrame rather than using
+     A-Frame's real-world-meshing, because that component forces plane and
+     mesh detection into requiredFeatures — on a headset that cannot supply
+     them the session refuses to start at all, and an AR game that will not
+     open is worse than one that does not know where the walls are.
+
+     Nothing here is allowed to be load-bearing. Most people have never run
+     Space Setup, and doors and windows have to be added to it by hand, so
+     the common case is a room with no openings marked, or no scan at all. */
+  var ROOM = {
+    ready: false, indoor: false, scanned: false,
+    floorY: 0, ceilY: 0,
+    walls: [], doors: [], windows: [], breaches: [],
+    labels: {},          // every raw label string the headset gave us
+    planeCount: 0, meshCount: 0, note: 'no session'
+  };
+
+  /* Meta's native labels are DOOR_FRAME and WINDOW_FRAME; the W3C registry
+     says door and window; nobody has written down which the browser emits.
+     So match on the stem and stop worrying about it. */
+  function normLabel(l) {
+    return String(l === undefined || l === null ? 'other' : l)
+      .toLowerCase().replace(/[_-]+/g, ' ').trim();
+  }
+  function isDoor(l)   { return /^door/.test(l); }
+  function isWindow(l) { return /^window/.test(l); }
+  function isWall(l)   { return /^wall(?! art)/.test(l) || l === 'wall face'; }
+  function isFloor(l)  { return /^floor/.test(l); }
+  function isCeil(l)   { return /^ceil/.test(l); }
+
+  AFRAME.registerComponent('room-sense', {
+    init: function () {
+      var self = this;
+      this.since = 0;
+      this.el.addEventListener('enter-vr', function () {
+        if (!self.el.is('ar-mode')) { return; }
+        ROOM.note = 'looking…'; self.since = 0;
+      });
+      this.el.addEventListener('exit-vr', function () { ROOM.ready = false; });
+    },
+
+    tick: function (t, dt) {
+      if (!this.el.is('ar-mode')) { return; }
+      this.since += (dt || 16);
+      // Meta asks for two to three seconds before deciding the room is empty
+      if (this.since < 900 || (this.since % 500) > 40) { return; }
+
+      var r = this.el.renderer, frame = r && r.xr && r.xr.getFrame && r.xr.getFrame();
+      var ref = r && r.xr && r.xr.getReferenceSpace && r.xr.getReferenceSpace();
+      if (!frame || !ref) { ROOM.note = 'no frame'; return; }
+
+      var planes = frame.detectedPlanes, meshes = frame.detectedMeshes;
+      ROOM.meshCount = meshes ? meshes.size : 0;
+      if (!planes) {
+        ROOM.note = 'this headset reports no plane detection';
+        ROOM.ready = true; ROOM.scanned = false; return;
+      }
+      ROOM.planeCount = planes.size;
+
+      var walls = [], doors = [], wins = [], floors = [], ceils = [];
+      var self = this;
+      planes.forEach(function (pl) {
+        var pose;
+        try { pose = frame.getPose(pl.planeSpace, ref); } catch (e) { return; }
+        if (!pose) { return; }
+        var lab = normLabel(pl.semanticLabel);
+        ROOM.labels[lab] = (ROOM.labels[lab] || 0) + 1;
+
+        var m = new THREE.Matrix4().fromArray(pose.transform.matrix);
+        var c = new THREE.Vector3().setFromMatrixPosition(m);
+        var n = new THREE.Vector3(0, 1, 0).applyMatrix4(
+                  new THREE.Matrix4().extractRotation(m)).normalize();
+
+        // polygon lives in plane space on the local XZ plane
+        var poly = pl.polygon || [], w = 0, h = 0;
+        if (poly.length) {
+          var xs = [], zs = [];
+          for (var i = 0; i < poly.length; i++) { xs.push(poly[i].x); zs.push(poly[i].z); }
+          w = Math.max.apply(null, xs) - Math.min.apply(null, xs);
+          h = Math.max.apply(null, zs) - Math.min.apply(null, zs);
+        }
+        var rec = { c: c, n: n, w: w, h: h, label: lab, m: m };
+
+        if (isDoor(lab))        { doors.push(rec); }
+        else if (isWindow(lab)) { wins.push(rec); }
+        else if (isFloor(lab))  { floors.push(rec); }
+        else if (isCeil(lab))   { ceils.push(rec); }
+        else if (isWall(lab) || Math.abs(n.y) < 0.4) { walls.push(rec); }
+      });
+
+      ROOM.walls = walls; ROOM.doors = doors; ROOM.windows = wins;
+      ROOM.scanned = planes.size > 0;
+      if (floors.length) { ROOM.floorY = floors[0].c.y; }
+      if (ceils.length)  { ROOM.ceilY  = ceils[0].c.y; }
+
+      /* Indoors is a guess, not a fact. The headset hands you a saved scan of
+         some room, not a statement about where you are standing now, so this
+         only ever decides where contacts come from — never whether the game
+         will run. */
+      ROOM.indoor = (ceils.length > 0) || (walls.length >= 3);
+      ROOM.ready = true;
+      ROOM.note = ROOM.scanned
+        ? (ROOM.indoor ? 'indoors' : 'open ground')
+        : 'no room scan on this headset';
+    }
+  });
+
+  /* Where a contact can come through. Doors and windows if the room has any,
+     every breach torn so far, and nothing at all outdoors. */
+  function apertures() {
+    return ROOM.doors.concat(ROOM.windows).concat(ROOM.breaches);
+  }
+
+  /* ------------------------------------------------- what the room said
+     I cannot see a headset from here, so the headset has to tell you. This
+     panel lists exactly what the scan returned, raw label strings included,
+     so a run in your actual room settles what no documentation would. */
+  /* A breach has to be visible or the mechanic is invisible. Torn edge on the
+     wall plane, lit from inside, with the hole itself left clear so whatever
+     comes through reads as coming from beyond the room rather than out of
+     thin air. */
+  AFRAME.registerComponent('breach-marks', {
+    init: function () {
+      this.g = new THREE.Group();
+      this.el.setObject3D('breaches', this.g);
+      this.made = 0;
+      this.tex = this.torn();
+    },
+
+    torn: function () {
+      var cv = document.createElement('canvas');
+      cv.width = cv.height = 256;
+      var g = cv.getContext('2d'), C = 128;
+      var grd = g.createRadialGradient(C, C, 10, C, C, 124);
+      grd.addColorStop(0.00, 'rgba(0,0,0,0)');
+      grd.addColorStop(0.52, 'rgba(0,0,0,0)');
+      grd.addColorStop(0.60, 'rgba(255,150,54,0.85)');
+      grd.addColorStop(0.74, 'rgba(180,66,24,0.55)');
+      grd.addColorStop(1.00, 'rgba(0,0,0,0)');
+      g.fillStyle = grd; g.fillRect(0, 0, 256, 256);
+      // ragged edge rather than a clean circle
+      g.globalCompositeOperation = 'destination-out';
+      for (var i = 0; i < 90; i++) {
+        var a = Math.random() * Math.PI * 2, rr = 58 + Math.random() * 26;
+        g.beginPath();
+        g.arc(C + Math.cos(a)*rr, C + Math.sin(a)*rr, 5 + Math.random()*13, 0, 6.3);
+        g.fill();
+      }
+      var t = new THREE.CanvasTexture(cv);
+      if ('colorSpace' in t) { t.colorSpace = THREE.SRGBColorSpace; }
+      return t;
+    },
+
+    tick: function (time) {
+      if (!this.el.sceneEl.is('ar-mode')) { this.g.visible = false; return; }
+      this.g.visible = true;
+      while (this.made < ROOM.breaches.length) {
+        var b = ROOM.breaches[this.made];
+        var m = new THREE.Mesh(
+          new THREE.PlaneGeometry(1.5, 1.5),
+          new THREE.MeshBasicMaterial({ map: this.tex, transparent: true,
+            depthWrite: false, side: THREE.DoubleSide, fog: false }));
+        m.position.copy(b.c);
+        m.lookAt(b.c.clone().add(b.n));
+        m.renderOrder = 6;
+        this.g.add(m);
+        this.made++;
+      }
+      // embers still cooling
+      for (var i = 0; i < this.g.children.length; i++) {
+        var age = (time - (ROOM.breaches[i].born || time)) / 1000;
+        this.g.children[i].material.opacity =
+          0.55 + 0.25 * Math.sin(time / 420 + i) * Math.exp(-age / 30);
+      }
+    }
+  });
+
+  AFRAME.registerComponent('room-report', {
+    init: function () {
+      var cv = document.createElement('canvas');
+      cv.width = 512; cv.height = 340;
+      this.cv = cv; this.ctx = cv.getContext('2d');
+      this.tex = new THREE.CanvasTexture(cv);
+      if ('colorSpace' in this.tex) { this.tex.colorSpace = THREE.SRGBColorSpace; }
+      var m = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.34, 0.226),
+        new THREE.MeshBasicMaterial({ map: this.tex, transparent: true,
+                                      depthTest: false, fog: false }));
+      m.renderOrder = 900;
+      this.el.setObject3D('mesh', m);
+      this.last = -1;
+      this.paint();
+    },
+
+    paint: function () {
+      var g = this.ctx, W = 512, H = 340;
+      g.clearRect(0, 0, W, H);
+      g.fillStyle = 'rgba(8,13,20,.88)'; g.fillRect(0, 0, W, H);
+      g.strokeStyle = 'rgba(120,146,174,.55)'; g.lineWidth = 2;
+      g.strokeRect(1, 1, W-2, H-2);
+
+      var y = 34;
+      g.font = '700 21px Saira, system-ui, sans-serif';
+      g.fillStyle = '#7FD4FF';
+      g.fillText('ROOM SCAN', 18, y); y += 30;
+
+      g.font = '400 17px ui-monospace, Menlo, monospace';
+      var lines = [
+        ['status', ROOM.note],
+        ['planes', String(ROOM.planeCount) + '   meshes ' + ROOM.meshCount],
+        ['walls',  String(ROOM.walls.length) +
+                   '   doors ' + ROOM.doors.length +
+                   '   windows ' + ROOM.windows.length],
+        ['breaches', String(ROOM.breaches.length)],
+        ['floor',  ROOM.floorY.toFixed(2) + ' m   ceiling ' + ROOM.ceilY.toFixed(2) + ' m']
+      ];
+      for (var i = 0; i < lines.length; i++) {
+        g.fillStyle = 'rgba(150,172,196,.75)'; g.fillText(lines[i][0], 18, y);
+        g.fillStyle = '#E8F2FA'; g.fillText(lines[i][1], 150, y);
+        y += 25;
+      }
+
+      y += 8;
+      g.fillStyle = 'rgba(150,172,196,.75)';
+      g.fillText('labels seen', 18, y); y += 24;
+      g.fillStyle = '#FFD79A';
+      var keys = Object.keys(ROOM.labels);
+      if (!keys.length) { g.fillText('(none)', 26, y); }
+      else {
+        var row = '';
+        for (var k = 0; k < keys.length; k++) {
+          var bit = keys[k] + '×' + ROOM.labels[keys[k]] + '  ';
+          if (row.length + bit.length > 40) { g.fillText(row, 26, y); y += 23; row = ''; }
+          row += bit;
+        }
+        if (row) { g.fillText(row, 26, y); }
+      }
+      this.tex.needsUpdate = true;
+    },
+
+    tick: function () {
+      if (!this.el.sceneEl.is('ar-mode')) {
+        this.el.object3D.visible = false; return;
+      }
+      this.el.object3D.visible = !window.__hudOff;
+      var sig = ROOM.planeCount + '|' + ROOM.walls.length + '|' + ROOM.doors.length +
+                '|' + ROOM.windows.length + '|' + ROOM.breaches.length + '|' + ROOM.note +
+                '|' + Object.keys(ROOM.labels).length;
+      if (sig !== this.last) { this.last = sig; this.paint(); }
+    }
+  });
+
+  /* The floor is real, so the only thing worth drawing on it is the part of
+     the envelope you cannot otherwise judge: how far 12 m actually is. */
+  AFRAME.registerComponent('ar-floor-rings', {
+    init: function () {
+      var g = new THREE.Group();
+      [[2, 0x2A4A66, 0.30], [6, 0x2A4A66, 0.24],
+       [12, AMBER, 0.55], [20, 0x2A4A66, 0.16]].forEach(function (spec) {
+        var m = new THREE.Mesh(
+          new THREE.RingGeometry(spec[0] - 0.035, spec[0] + 0.035, 96),
+          new THREE.MeshBasicMaterial({ color: spec[1], transparent: true,
+            opacity: spec[2], side: THREE.DoubleSide, depthWrite: false, fog: false }));
+        m.rotation.x = -Math.PI / 2;
+        g.add(m);
+      });
+      this.el.setObject3D('rings', g);
+      this.g = g;
+    },
+    tick: function () {
+      var on = this.el.sceneEl.is('ar-mode');
+      this.g.visible = on && !window.__hudOff;
+      if (on) { this.g.position.y = ROOM.floorY + 0.01; }
+    }
+  });
 
   AFRAME.registerComponent('puget-terrain', {
     init: function () {
@@ -4303,20 +4586,17 @@
   function isRocketOnly(name) { return !!(TYPES[name] && TYPES[name].rocketOnly); }
 
   function waveTable(wave) {
-    /* Wave 1 teaches the sky. The water arrives in wave 2 with a trawler
-       among the boats, so the first surface contact a player meets is as
-       likely to be a fisherman as a threat. */
+    /* Everything flies now. With the sea gone the only civilians left are the
+       bird and the airliner, so they carry more weight than they used to —
+       take them away and there is nothing left to get wrong. */
     if (wave <= 1) { return [['drone', 6], ['bird', 3], ['missile', 2]]; }
     if (wave === 2) {
-      return [['drone', 4], ['bird', 2], ['airliner', 2], ['jet', 2], ['missile', 4],
-              ['fishing', 3], ['usv', 2]];
+      return [['drone', 4], ['bird', 3], ['airliner', 3], ['jet', 2], ['missile', 4]];
     }
     if (wave === 3) {
-      return [['drone', 3], ['bird', 2], ['airliner', 2], ['jet', 2], ['missile', 6],
-              ['fishing', 3], ['usv', 3], ['torpedo', 2]];
+      return [['drone', 3], ['bird', 3], ['airliner', 3], ['jet', 3], ['missile', 6]];
     }
-    return [['drone', 2], ['bird', 2], ['airliner', 2], ['jet', 2], ['missile', 7],
-            ['fishing', 3], ['usv', 4], ['torpedo', 4]];
+    return [['drone', 3], ['bird', 3], ['airliner', 3], ['jet', 3], ['missile', 7]];
   }
   // From wave 3 a missile contact can arrive as a salvo on the same bearing.
   function salvoSize(wave) {
@@ -5394,6 +5674,7 @@
       this.penalise(-8, 'Target reached you', 0.5);
 
       if (c && c.hostile) {
+        this.tearBreach(el);
         this.lives = Math.max(0, this.lives - 1);
         this.paint();
         if (this.lives <= 0) {
@@ -6502,6 +6783,46 @@
       if (sent > 1) { this.say(sent + ' missiles inbound'); }
     },
 
+    /* Pick an opening for the next contact, or null when there is nothing to
+       come through — outdoors, or a room nobody has scanned. Weighted so a
+       fresh breach is the likeliest way in: the hole you just paid for is the
+       one that keeps hurting. */
+    enterPoint: function () {
+      if (!ROOM.ready || !ROOM.indoor) { return null; }
+      var ap = apertures();
+      if (!ap.length) { return null; }
+      if (ROOM.breaches.length && Math.random() < 0.55) {
+        return ROOM.breaches[Math.floor(Math.random() * ROOM.breaches.length)];
+      }
+      return ap[Math.floor(Math.random() * ap.length)];
+    },
+
+    /* Something got through. Tear a hole in the wall it came across, and let
+       everything after it use the hole. */
+    tearBreach: function (el) {
+      if (!ROOM.ready || !ROOM.indoor || !ROOM.walls.length) { return; }
+      if (ROOM.breaches.length >= 6) { return; }
+      var p = el && el.object3D ? el.object3D.position : null;
+      if (!p) { return; }
+      var best = null, bestD = 1e9;
+      for (var i = 0; i < ROOM.walls.length; i++) {
+        var w = ROOM.walls[i];
+        var d = Math.hypot(w.c.x - p.x, w.c.z - p.z);
+        if (d < bestD) { bestD = d; best = w; }
+      }
+      if (!best) { return; }
+      // on that wall, nearest point to where the contact actually crossed
+      var c = new THREE.Vector3(p.x, Math.max(ROOM.floorY + 0.9, Math.min(p.y, ROOM.ceilY - 0.4 || p.y)), p.z);
+      var toWall = new THREE.Vector3().subVectors(c, best.c);
+      var along = toWall.dot(best.n);
+      c.addScaledVector(best.n, -along);            // drop it onto the wall plane
+      var b = { c: c, n: best.n.clone().negate(), w: 0.9, h: 0.9,
+                label: 'breach', born: performance.now() };
+      ROOM.breaches.push(b);
+      sfx.leak();
+      this.say('BREACH · ' + ROOM.breaches.length + ' OPEN');
+    },
+
     spawnOne: function (name, a, lag, opts) {
       var spec = TYPES[name];
       opts = opts || {};
@@ -6509,11 +6830,22 @@
       el.setAttribute('class', 'target');
 
       var r = 26 + Math.random() * 10 + (lag || 0);
-      // surface contacts come from further out, because on the water you see
-      // them long before they matter
-      if (spec.surface) { r += 8 + Math.random() * 10; }
-      var y = opts.y !== undefined ? opts.y : (spec.surface ? 0 : rng(spec.alt));
+      var y = opts.y !== undefined ? opts.y : rng(spec.alt);
       var pos = { x: Math.cos(a) * r, y: y, z: Math.sin(a) * r };
+
+      /* Indoors, a contact does not appear out of the wall — it comes through
+         something. A door, a window, or a hole one of its own made earlier.
+         It starts just outside the opening so it is heard and tracked before
+         it is seen, which is the whole point: the scope knows before you do. */
+      var ap = this.enterPoint();
+      if (ap) {
+        var back = 1.2 + Math.random() * 2.6;       // how far outside it starts
+        var jx = (Math.random() - 0.5) * Math.min(1.2, ap.w || 0.8);
+        var jy = (Math.random() - 0.5) * Math.min(0.9, ap.h || 0.8);
+        pos = { x: ap.c.x + ap.n.x * back + jx,
+                y: Math.max(ROOM.floorY + 0.5, ap.c.y + jy),
+                z: ap.c.z + ap.n.z * back };
+      }
       el.setAttribute('position', pos);
       el.setAttribute('target', {
         type: name,
@@ -6818,6 +7150,7 @@
      than with the scene. A slow repaint keeps the pill flashes expiring and
      the microphone state honest. */
   window.DroneRange = {
+    room: ROOM, pick: pickType, apertures: apertures,
     hr: HR,
     train: AI_TRAIN,
     music: Music,
