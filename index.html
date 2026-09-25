@@ -735,7 +735,7 @@
         <a-entity id="vrscore"  position="-0.30 -0.33 -0.95"
                   canvas-label="value: 0; label: SCORE; worldW: 0.2"></a-entity>
         <a-entity id="vrvitals" position="0 -0.52 -0.95" vitals="worldW: 0.26"></a-entity>
-        <a-entity id="roomrep" position="0.42 -0.10 -0.80" rotation="0 -22 0" room-report></a-entity>
+        <a-entity id="roomrep" position="0.26 -0.04 -1.30" rotation="0 -11 0" room-report></a-entity>
         <a-entity id="vrrockets" position="0.30 -0.33 -0.95"
                   canvas-label="value: 6; label: ROCKETS; worldW: 0.2; tone: ice"></a-entity>
       </a-entity>
@@ -1571,7 +1571,7 @@
      Space Setup, and doors and windows have to be added to it by hand, so
      the common case is a room with no openings marked, or no scan at all. */
   var ROOM = {
-    ready: false, indoor: false, scanned: false,
+    ready: false, indoor: false, scanned: false, floorSeen: false,
     floorY: 0, ceilY: 0,
     walls: [], doors: [], windows: [], breaches: [],
     labels: {},          // every raw label string the headset gave us
@@ -1842,6 +1842,7 @@
 
       ROOM.walls = walls; ROOM.doors = doors; ROOM.windows = wins;
       ROOM.scanned = planes.size > 0;
+      ROOM.floorSeen = floors.length > 0;
       if (floors.length) { ROOM.floorY = floors[0].c.y; }
       if (ceils.length)  { ROOM.ceilY  = ceils[0].c.y; }
 
@@ -1934,91 +1935,102 @@
   AFRAME.registerComponent('room-report', {
     init: function () {
       var cv = document.createElement('canvas');
-      cv.width = 512; cv.height = 560;
+      cv.width = 768; cv.height = 880;
       this.cv = cv; this.ctx = cv.getContext('2d');
       this.tex = new THREE.CanvasTexture(cv);
       if ('colorSpace' in this.tex) { this.tex.colorSpace = THREE.SRGBColorSpace; }
       var m = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.34, 0.372),
+        new THREE.PlaneGeometry(0.66, 0.756),
         new THREE.MeshBasicMaterial({ map: this.tex, transparent: true,
                                       depthTest: false, fog: false }));
       m.renderOrder = 900;
       this.el.setObject3D('mesh', m);
-      this.last = -1;
+      this.last = -1; this.ago = 0;
       this.paint();
     },
 
+    row: function (k, v, tone) {
+      var g = this.ctx;
+      g.font = '400 27px ui-monospace, Menlo, monospace';
+      g.fillStyle = 'rgba(150,172,196,.78)'; g.fillText(k, 26, this.y);
+      g.fillStyle = tone || '#E8F2FA';       g.fillText(String(v), 250, this.y);
+      this.y += 38;
+    },
+
+    head: function (txt) {
+      var g = this.ctx;
+      this.y += 10;
+      g.strokeStyle = 'rgba(120,146,174,.32)'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(26, this.y - 26); g.lineTo(742, this.y - 26); g.stroke();
+      g.font = '700 25px Saira, system-ui, sans-serif';
+      g.fillStyle = '#7FD4FF'; g.fillText(txt, 26, this.y + 6);
+      this.y += 44;
+    },
+
     paint: function () {
-      var g = this.ctx, W = 512, H = 560;
+      var g = this.ctx, W = 768, H = 880;
       g.clearRect(0, 0, W, H);
-      g.fillStyle = 'rgba(8,13,20,.88)'; g.fillRect(0, 0, W, H);
-      g.strokeStyle = 'rgba(120,146,174,.55)'; g.lineWidth = 2;
-      g.strokeRect(1, 1, W-2, H-2);
+      g.fillStyle = 'rgba(8,13,20,.90)'; g.fillRect(0, 0, W, H);
+      g.strokeStyle = 'rgba(120,146,174,.6)'; g.lineWidth = 3;
+      g.strokeRect(2, 2, W - 4, H - 4);
 
-      var y = 34;
-      g.font = '700 21px Saira, system-ui, sans-serif';
-      g.fillStyle = '#7FD4FF';
-      g.fillText('ROOM SCAN', 18, y); y += 30;
+      this.y = 52;
+      g.font = '700 32px Saira, system-ui, sans-serif';
+      g.fillStyle = '#FFD79A'; g.fillText('DIAGNOSTIC', 26, this.y);
+      this.y += 30;
 
-      g.font = '400 17px ui-monospace, Menlo, monospace';
-      var lines = [
-        ['status', ROOM.note],
-        ['planes', String(ROOM.planeCount) + '   meshes ' + ROOM.meshCount],
-        ['walls',  String(ROOM.walls.length) +
-                   '   doors ' + ROOM.doors.length +
-                   '   windows ' + ROOM.windows.length],
-        ['breaches', String(ROOM.breaches.length)],
-        ['floor',  ROOM.floorY.toFixed(2) + ' m   ceiling ' + ROOM.ceilY.toFixed(2) + ' m']
-      ];
-      for (var i = 0; i < lines.length; i++) {
-        g.fillStyle = 'rgba(150,172,196,.75)'; g.fillText(lines[i][0], 18, y);
-        g.fillStyle = '#E8F2FA'; g.fillText(lines[i][1], 150, y);
-        y += 25;
-      }
+      /* Where you are standing. If the eye is up near 17 m the rig never came
+         down off the warship and the sky will be under your feet. */
+      this.head('WHERE YOU ARE');
+      var sc = this.el.sceneEl;
+      var rig = document.getElementById('rig');
+      var eye = new THREE.Vector3();
+      if (sc.camera) { sc.camera.getWorldPosition(eye); }
+      var rigY = rig ? rig.object3D.position.y : -1;
+      this.row('mode', sc.is('ar-mode') ? 'AR (passthrough)'
+                     : (sc.is('vr-mode') ? 'VR' : 'flat screen'),
+               sc.is('ar-mode') ? '#9FE8B0' : '#FFD79A');
+      this.row('eye height', eye.y.toFixed(2) + ' m', eye.y > 4 ? '#FF8A6A' : '#9FE8B0');
+      this.row('stand', rigY.toFixed(2) + ' m', Math.abs(rigY) < 0.01 ? '#9FE8B0' : '#FF8A6A');
+      this.row('floor', (typeof ROOM !== 'undefined' && ROOM.floorSeen)
+                        ? ROOM.floorY.toFixed(2) + ' m (scanned)' : '0.00 m (assumed)');
 
-      y += 6;
-      g.strokeStyle = 'rgba(120,146,174,.3)';
-      g.beginPath(); g.moveTo(18, y - 12); g.lineTo(494, y - 12); g.stroke();
+      /* And where the contacts are, which is the other half of the question. */
       var G = (window.DroneRange && window.DroneRange.game) ? window.DroneRange.game() : null;
       if (G) {
-        var alive = 0, host = 0, i;
+        var lo = 99, hi = -99, n = 0, host = 0, i;
         for (i = 0; i < (G.live || []).length; i++) {
-          var cc = G.live[i].components && G.live[i].components.target;
-          alive++; if (cc && cc.hostile) { host++; }
+          var e = G.live[i], c = e.components && e.components.target;
+          var yy = e.object3D.position.y;
+          if (yy < lo) { lo = yy; } if (yy > hi) { hi = yy; }
+          n++; if (c && c.hostile) { host++; }
         }
+        this.row('lowest contact', n ? lo.toFixed(2) + ' m' : '\u2014',
+                 (n && lo < 1.5) ? '#FF8A6A' : '#9FE8B0');
+        this.row('highest', n ? hi.toFixed(2) + ' m' : '\u2014');
+
+        this.head('ROUND');
+        this.row('level', 'L' + G.wave + '   ' + Math.round(G.waveTime || 0) + 's   ' +
+                          G.lives + ' lives');
+        this.row('in air', n + '  (' + host + ' hostile)');
         var cleared = '?';
         try { cleared = G.waveCleared() ? 'yes' : 'no'; } catch (e) { cleared = 'err'; }
-        var wl = [
-          ['round', 'L' + G.wave + '   t ' + Math.round(G.waveTime || 0) + 's   lives ' + G.lives],
-          ['in air', alive + ' (' + host + ' hostile)'],
-          ['owed', 'queue ' + ((G.queue || []).length) + '   swarms ' + G.swarmsLeft],
-          ['clear?', cleared + '   between-rounds ' + (G.loOn ? 'UP' : 'no')]
-        ];
-        for (i = 0; i < wl.length; i++) {
-          g.fillStyle = 'rgba(150,172,196,.75)'; g.fillText(wl[i][0], 18, y);
-          g.fillStyle = '#9FE8B0'; g.fillText(wl[i][1], 150, y);
-          y += 25;
-        }
-        y += 6;
+        this.row('clear', cleared + '   panel ' + (G.loOn ? 'UP' : 'no'));
       }
-      g.fillStyle = 'rgba(150,172,196,.75)'; g.fillText('live air', 18, y);
-      g.fillStyle = LIVE.on ? '#7FD4FF' : 'rgba(150,172,196,.55)';
-      g.fillText(LIVE.note + (LIVE.on ? '   ' + LIVE.count + ' up' : ''), 150, y);
-      y += 31;
-      g.fillStyle = 'rgba(150,172,196,.75)';
-      g.fillText('labels seen', 18, y); y += 24;
-      g.fillStyle = '#FFD79A';
+
+      this.head('LIVE AIRCRAFT');
+      this.row('feed', LIVE.on ? LIVE.note : 'OFF  no ?feed= in the URL',
+               LIVE.on ? '#7FD4FF' : '#FF8A6A');
+      this.row('showing', LIVE.on ? (LIVE.count + '  within ' + LIVE.nm + ' nm') : '\u2014');
+
+      this.head('ROOM');
+      this.row('scan', ROOM.note);
+      this.row('surfaces', ROOM.planeCount + ' planes   ' + ROOM.walls.length + ' walls');
+      this.row('openings', ROOM.doors.length + ' doors   ' + ROOM.windows.length +
+                           ' windows   ' + ROOM.breaches.length + ' breaches');
       var keys = Object.keys(ROOM.labels);
-      if (!keys.length) { g.fillText('(none)', 26, y); }
-      else {
-        var row = '';
-        for (var k = 0; k < keys.length; k++) {
-          var bit = keys[k] + '×' + ROOM.labels[keys[k]] + '  ';
-          if (row.length + bit.length > 40) { g.fillText(row, 26, y); y += 23; row = ''; }
-          row += bit;
-        }
-        if (row) { g.fillText(row, 26, y); }
-      }
+      this.row('labels', keys.length ? keys.slice(0, 5).join(' ') : '(none)', '#FFD79A');
+
       this.tex.needsUpdate = true;
     },
 
@@ -2027,16 +2039,13 @@
     },
 
     refresh: function () {
-      if (!this.el.sceneEl.is('ar-mode')) {
+      if (!this.el.sceneEl.is('ar-mode') && !this.el.sceneEl.is('vr-mode')) {
         this.el.object3D.visible = false; return;
       }
       this.el.object3D.visible = !window.__hudOff;
-      var sig = ROOM.planeCount + '|' + ROOM.walls.length + '|' + ROOM.doors.length +
-                '|' + ROOM.windows.length + '|' + ROOM.breaches.length + '|' + ROOM.note +
-                '|' + Object.keys(ROOM.labels).length;
-      if (sig !== this.last) { this.last = sig; this.paint(); return; }
-      this.ago = (this.ago || 0) + 1;
-      if (this.ago > 30) { this.ago = 0; this.paint(); }   // ~ twice a second
+      if (!this.el.object3D.visible) { return; }
+      this.ago++;
+      if (this.ago > 20) { this.ago = 0; this.paint(); }
     }
   });
 
@@ -2168,20 +2177,35 @@
   /* How far above the floor a contact may never come below, in the room. */
   var AR_CEILING_CLEAR = 2.2;
 
+  /* Where the floor is, in the coordinates everything else uses. A scanned
+     floor plane if we have one; otherwise assume the reference space puts the
+     origin on the floor, which is what local-floor does — but if the headset
+     gave us a plain 'local' space the origin is at head height instead, so
+     fall back to the camera and subtract a person. */
+  function arFloor() {
+    if (typeof ROOM !== 'undefined' && ROOM.scanned && ROOM.floorSeen) { return ROOM.floorY; }
+    return 0;
+  }
+
   /* The rig is parked on the warship's watch platform. In passthrough there
      is no warship and the floor is the floor, so it has to come down or the
      player floats sixteen metres up and the whole sky arrives beneath them. */
   AFRAME.registerComponent('ar-stand', {
     init: function () {
-      var el = this.el, sc = el.sceneEl, home = el.getAttribute('position');
+      var home = this.el.getAttribute('position');
       this.home = { x: home.x, y: home.y, z: home.z };
-      var self = this;
-      sc.addEventListener('enter-vr', function () {
-        if (sc.is('ar-mode')) { el.object3D.position.set(0, 0, 0); }
-      });
-      sc.addEventListener('exit-vr', function () {
-        el.object3D.position.set(self.home.x, self.home.y, self.home.z);
-      });
+    },
+    /* Checked every frame rather than on enter-vr, because the scene's
+       ar-mode state and that event do not arrive in a guaranteed order — and
+       if the check loses that race the player is left hanging sixteen metres
+       up with the whole sky underneath them. This corrects itself. */
+    tick: function () {
+      var p = this.el.object3D.position;
+      if (this.el.sceneEl.is('ar-mode')) {
+        if (p.x !== 0 || p.y !== 0 || p.z !== 0) { p.set(0, 0, 0); }
+      } else if (p.y !== this.home.y) {
+        p.set(this.home.x, this.home.y, this.home.z);
+      }
     }
   });
 
@@ -5036,7 +5060,7 @@
          altitudes were written for a player standing on a tower 16 m up; on
          the real floor the same numbers put contacts underfoot. */
       if (this.el.sceneEl.is('ar-mode')) {
-        var minY = (typeof ROOM !== 'undefined' ? ROOM.floorY : 0) + AR_CEILING_CLEAR;
+        var minY = arFloor() + AR_CEILING_CLEAR;
         if (o.position.y < minY) { o.position.y = minY; this.baseY = minY; }
       }
 
