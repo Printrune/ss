@@ -920,6 +920,12 @@
      Same pattern and the same reason: the coastline is scenery, and anyone
      who finds it distracting behind a contact should be able to drop it
      without leaving the round. */
+  /* The diagnostic panel is opt-in: ?debug=1, or press P at any time. */
+  window.__debugOn = /(\?|&)debug=1/.test(location.search);
+  window.addEventListener('keydown', function (e) {
+    if (e.key === 'p' || e.key === 'P') { window.__debugOn = !window.__debugOn; }
+  });
+
   window.__landOff = false;
   (function () {
     var btn = document.getElementById('terBtn');
@@ -1603,8 +1609,41 @@
      (worker.js) rather than to them directly. */
   var LIVE = {
     on: false, url: null, at: [47.6025, -122.4200], nm: 250,
-    note: 'off', count: 0, source: null, lastOk: 0, tried: 0
+    note: 'off', count: 0, source: null, lastOk: 0, tried: 0, via: null
   };
+
+  /* The aircraft feeds send no CORS header, so a page cannot call them
+     directly. Your own relay (worker.js) is the reliable answer, but setting
+     one up is a faff, so without one we try a few public relays in turn and
+     report which -- if any -- answered. None of them promises uptime. */
+  var RELAYS = [
+    { name: 'allorigins',
+      wrap: function (u) { return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u); } },
+    { name: 'codetabs',
+      wrap: function (u) { return 'https://api.codetabs.com/v1/proxy?quest=' + u; } },
+    { name: 'corsproxy',
+      wrap: function (u) { return 'https://corsproxy.io/?url=' + encodeURIComponent(u); } }
+  ];
+
+  function adsbUrl() {
+    return 'https://api.adsb.lol/v2/point/' + LIVE.at[0] + '/' + LIVE.at[1] + '/' +
+           Math.min(250, Math.round(LIVE.nm));
+  }
+
+  /* Raw readsb shape -> the few fields the game reads. Mirrors what the
+     worker does server-side, for when we are talking to a bare relay. */
+  function tidyRaw(a) {
+    var alt = a.alt_baro === 'ground' ? 0 : Number(a.alt_baro || a.alt_geom || 0);
+    return {
+      hex: a.hex, call: (a.flight || '').trim() || null, reg: a.r || null,
+      type: a.t || null, desc: a.desc || null, cat: a.category || null,
+      squawk: a.squawk || null, altFt: alt,
+      gs: Number(a.gs || 0), track: Number(a.track || 0),
+      dst: Number(a.dst || 0), dir: Number(a.dir || 0),
+      mil: !!((a.dbFlags || 0) & 1), src: a.type || null,
+      seen: Number(a.seen_pos !== undefined ? a.seen_pos : (a.seen || 0))
+    };
+  }
 
   (function () {
     var q = new URLSearchParams(location.search);
@@ -1618,7 +1657,9 @@
       LIVE.at = at.split(',').map(Number);
     }
     if (q.get('nm')) { LIVE.nm = Math.min(500, Math.max(5, +q.get('nm') || 250)); }
-    if (feed) { LIVE.url = feed; LIVE.on = true; LIVE.note = 'waiting'; }
+    LIVE.on = q.get('air') !== '0';          // on by default now
+    if (feed) { LIVE.url = feed; LIVE.note = 'waiting for your relay'; }
+    else { LIVE.note = 'waiting'; }
   }());
 
   /* Emitter category -> something to draw and a size to report. */
@@ -1660,28 +1701,58 @@
     },
 
     pull: function () {
-      var self = this;
       this.busy = true; LIVE.tried++;
+      if (LIVE.url) { this.viaWorker(); } else { this.viaRelay(0); }
+    },
+
+    viaWorker: function () {
+      var self = this;
       var u = LIVE.url + (LIVE.url.indexOf('?') === -1 ? '?' : '&') +
               'lat=' + LIVE.at[0] + '&lon=' + LIVE.at[1] + '&dist=' + LIVE.nm;
       fetch(u, { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (j) {
           self.busy = false;
-          if (!j || !j.ok || !j.aircraft) {
-            LIVE.note = 'relay said no'; self.replay(); return;
-          }
-          LIVE.source = j.source; LIVE.lastOk = Date.now();
-          LIVE.note = 'live · ' + j.source;
-          try { localStorage.setItem('sentraAirCache', JSON.stringify(j)); } catch (e) {}
-          self.cached = j;
-          self.apply(j.aircraft);
+          if (!j || !j.ok || !j.aircraft) { LIVE.note = 'your relay said no'; self.replay(); return; }
+          LIVE.via = 'your relay'; LIVE.source = j.source;
+          self.land(j.aircraft, 'your relay · ' + j.source);
         })
-        ['catch'](function (e) {
+        ['catch'](function () {
           self.busy = false;
-          LIVE.note = 'no relay (' + (e.message || 'blocked') + ')';
+          LIVE.note = 'your relay unreachable';
           self.replay();
         });
+    },
+
+    /* Try each public relay in turn and stop at the first that answers with
+       something that looks like aircraft. Whichever won is named on the
+       panel; if none does, that is said plainly too. */
+    viaRelay: function (i) {
+      var self = this;
+      if (i >= RELAYS.length) {
+        self.busy = false;
+        LIVE.note = 'no relay reachable — set up your own';
+        self.replay(); return;
+      }
+      var R = RELAYS[i];
+      fetch(R.wrap(adsbUrl()), { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) { throw new Error(r.status); } return r.json(); })
+        .then(function (j) {
+          var list = j && (j.ac || j.aircraft);
+          if (!list || !list.length) { throw new Error('empty'); }
+          self.busy = false;
+          LIVE.via = R.name;
+          self.land(list.map(tidyRaw), 'live · via ' + R.name);
+        })
+        ['catch'](function () { self.viaRelay(i + 1); });
+    },
+
+    land: function (list, note) {
+      LIVE.lastOk = Date.now(); LIVE.note = note;
+      var keep = { ok: true, source: LIVE.via, now: Date.now(), aircraft: list };
+      try { localStorage.setItem('sentraAirCache', JSON.stringify(keep)); } catch (e) {}
+      this.cached = keep;
+      this.apply(list);
     },
 
     /* Network gone. Show what was overhead last time it worked, and say so. */
@@ -2039,6 +2110,10 @@
     },
 
     refresh: function () {
+      /* Off unless asked for. This is a fault-finding panel, not part of the
+         game, and it has no business floating in front of anyone who did not
+         ask to see it. Add ?debug=1 to the URL, or press P. */
+      if (!window.__debugOn) { this.el.object3D.visible = false; return; }
       if (!this.el.sceneEl.is('ar-mode') && !this.el.sceneEl.is('vr-mode')) {
         this.el.object3D.visible = false; return;
       }
