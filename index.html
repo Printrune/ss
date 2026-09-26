@@ -738,6 +738,7 @@
               sky-dome hide-on-enter-ar></a-entity>
     <a-entity id="arfloor" ar-floor-rings></a-entity>
     <a-entity id="arbreach" breach-marks></a-entity>
+    <a-entity id="arapert" aperture-marks></a-entity>
     <a-entity id="liveair" live-air></a-entity>
     <a-entity id="land" puget-terrain hide-on-enter-ar></a-entity>
     <a-entity id="floor" rotation="-90 0 0" range-floor hide-on-enter-ar></a-entity>
@@ -1643,6 +1644,7 @@
     ready: false, indoor: false, scanned: false, floorSeen: false,
     floorY: 0, ceilY: 0,
     walls: [], doors: [], windows: [], breaches: [],
+    centre: null, radius: 3, warned: false,
     labels: {},          // every raw label string the headset gave us
     planeCount: 0, meshCount: 0, note: 'no session'
   };
@@ -1979,14 +1981,23 @@
                   new THREE.Matrix4().extractRotation(m)).normalize();
 
         // polygon lives in plane space on the local XZ plane
-        var poly = pl.polygon || [], w = 0, h = 0;
+        var poly = pl.polygon || [], w = 0, h = 0, ox = 0, oz = 0;
         if (poly.length) {
           var xs = [], zs = [];
           for (var i = 0; i < poly.length; i++) { xs.push(poly[i].x); zs.push(poly[i].z); }
-          w = Math.max.apply(null, xs) - Math.min.apply(null, xs);
-          h = Math.max.apply(null, zs) - Math.min.apply(null, zs);
+          var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+          var z0 = Math.min.apply(null, zs), z1 = Math.max.apply(null, zs);
+          w = x1 - x0; h = z1 - z0; ox = (x0 + x1) / 2; oz = (z0 + z1) / 2;
         }
-        var rec = { c: c, n: n, w: w, h: h, label: lab, m: m };
+        /* The pose is the plane's origin, which is not necessarily the middle
+           of the polygon. Everything downstream wants the middle. */
+        var rot = new THREE.Matrix4().extractRotation(m);
+        c.add(new THREE.Vector3(ox, 0, oz).applyMatrix4(rot));
+        // which in-plane axis is vertical decides which extent is the height
+        var ax = new THREE.Vector3(1, 0, 0).applyMatrix4(rot);
+        var xVert = Math.abs(ax.y) > 0.7;
+        var rec = { c: c, n: n, w: w, h: h, ox: ox, oz: oz, xVert: xVert,
+                    wide: xVert ? h : w, tall: xVert ? w : h, label: lab, m: m };
 
         if (isDoor(lab))        { doors.push(rec); }
         else if (isWindow(lab)) { wins.push(rec); }
@@ -1997,6 +2008,23 @@
 
       ROOM.walls = walls; ROOM.doors = doors; ROOM.windows = wins;
       ROOM.scanned = planes.size > 0;
+
+      /* Which way is out. The API does not promise which side of a wall its
+         normal faces, so orient every normal away from the middle of the room
+         and remember how big the room is. */
+      var ctr = new THREE.Vector3(), nC = 0, all = walls.concat(doors, wins), rad = 0;
+      for (var a = 0; a < all.length; a++) { ctr.add(all[a].c); nC++; }
+      if (nC) { ctr.multiplyScalar(1 / nC); } else { ctr.set(0, 1, 0); }
+      for (var b = 0; b < all.length; b++) {
+        var away = new THREE.Vector3().subVectors(all[b].c, ctr); away.y = 0;
+        var out = all[b].n.clone(); out.y = 0;
+        if (out.lengthSq() < 1e-6) { out.copy(away); }
+        out.normalize();
+        if (out.dot(away) < 0) { out.negate(); }
+        all[b].out = out;
+        rad = Math.max(rad, Math.hypot(all[b].c.x - ctr.x, all[b].c.z - ctr.z));
+      }
+      ROOM.centre = ctr; ROOM.radius = Math.max(2, rad);
       ROOM.floorSeen = floors.length > 0;
       if (floors.length) { ROOM.floorY = floors[0].c.y; }
       if (ceils.length)  { ROOM.ceilY  = ceils[0].c.y; }
@@ -2016,7 +2044,18 @@
   /* Where a contact can come through. Doors and windows if the room has any,
      every breach torn so far, and nothing at all outdoors. */
   function apertures() {
-    return ROOM.doors.concat(ROOM.windows).concat(ROOM.breaches);
+    var ap = ROOM.doors.concat(ROOM.windows).concat(ROOM.breaches);
+    if (ap.length || !ROOM.walls.length) { return ap; }
+    /* Nothing marked. Most people have never added doors and windows to
+       Space Setup, so the honest fallback is every wall, and a message that
+       says why, once. */
+    return ROOM.walls.map(function (w) {
+      return { c: w.c, n: w.n, out: w.out, w: Math.min(1.2, w.wide || 1), h: 1,
+               wide: Math.min(1.2, w.wide || 1), tall: 1, label: 'wall', m: w.m, fallback: true };
+    });
+  }
+  function aperturesAreFallback() {
+    return !!(ROOM.walls.length && !(ROOM.doors.length + ROOM.windows.length + ROOM.breaches.length));
   }
 
   /* ------------------------------------------------- what the room said
@@ -2027,6 +2066,72 @@
      wall plane, lit from inside, with the hole itself left clear so whatever
      comes through reads as coming from beyond the room rather than out of
      thin air. */
+  /* Every opening the room scan gave us, framed so you know where to watch.
+     Cyan for a door or window, dim steel when we have had to fall back to
+     the walls, amber is the breaches' own colour (breach-marks draws those). */
+  AFRAME.registerComponent('aperture-marks', {
+    init: function () {
+      this.g = new THREE.Group();
+      this.el.setObject3D('apertures', this.g);
+      this.key = '';
+      this.texCache = {};
+    },
+    frameTex: function (label, fallback) {
+      var k = label + (fallback ? '!' : '');
+      if (this.texCache[k]) { return this.texCache[k]; }
+      var cv = document.createElement('canvas'); cv.width = 512; cv.height = 512;
+      var g = cv.getContext('2d');
+      var col = fallback ? 'rgba(94,119,147,' : 'rgba(56,182,240,';
+      g.lineWidth = 14; g.strokeStyle = col + '0.95)';
+      g.shadowColor = col + '0.9)'; g.shadowBlur = 24;
+      g.strokeRect(12, 12, 488, 488);
+      g.shadowBlur = 0;
+      // corner ticks, so it reads as a frame and not a box
+      g.lineWidth = 6; g.strokeStyle = col + '0.6)';
+      [[40, 40, 1, 1], [472, 40, -1, 1], [40, 472, 1, -1], [472, 472, -1, -1]].forEach(function (c) {
+        g.beginPath(); g.moveTo(c[0], c[1] + 40 * c[3]); g.lineTo(c[0], c[1]); g.lineTo(c[0] + 40 * c[2], c[1]); g.stroke();
+      });
+      g.font = 'bold 44px "IBM Plex Mono", ui-monospace, monospace';
+      g.textAlign = 'center'; g.fillStyle = col + '0.95)';
+      g.fillText(label.toUpperCase(), 256, 84);
+      var t = new THREE.CanvasTexture(cv);
+      if ('colorSpace' in t) { t.colorSpace = THREE.SRGBColorSpace; }
+      this.texCache[k] = t;
+      return t;
+    },
+    tick: function (time) {
+      try { this.place(time); } catch (e) {}
+    },
+    place: function (time) {
+      var on = this.el.sceneEl.is('ar-mode') && ROOM.ready && ROOM.indoor && !window.__hudOff;
+      this.g.visible = on;
+      if (!on) { return; }
+      var fb = aperturesAreFallback();
+      var list = fb ? apertures() : ROOM.doors.concat(ROOM.windows);
+      var key = list.length + '|' + (fb ? 'fb' : 'ap') + '|' + ROOM.planeCount;
+      if (key !== this.key) {
+        this.key = key;
+        while (this.g.children.length) { this.g.remove(this.g.children[0]); }
+        for (var i = 0; i < list.length; i++) {
+          var a = list[i];
+          var label = fb ? 'wall' : (isDoor(a.label) ? 'door' : 'window');
+          var wide = Math.max(0.5, a.wide || 0.9), tall = Math.max(0.5, a.tall || 0.9);
+          var geo = new THREE.PlaneGeometry(wide, tall);
+          var m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+            map: this.frameTex(label, fb), transparent: true, depthWrite: false,
+            depthTest: false, side: THREE.DoubleSide, fog: false }));
+          m.position.copy(a.c);
+          var face = a.c.clone().add(a.out || a.n);
+          m.lookAt(face);
+          m.renderOrder = 7;
+          this.g.add(m);
+        }
+      }
+      var k = 0.72 + 0.28 * Math.sin(time / 600);
+      for (var j = 0; j < this.g.children.length; j++) { this.g.children[j].material.opacity = k; }
+    }
+  });
+
   AFRAME.registerComponent('breach-marks', {
     init: function () {
       this.g = new THREE.Group();
@@ -2232,7 +2337,10 @@
     place: function () {
       var on = this.el.sceneEl.is('ar-mode');
       this.g.visible = on && !window.__hudOff;
-      if (on) { this.g.position.y = ROOM.floorY + 0.01; }
+      if (on) {
+        var g = this.el.sceneEl.components.game;
+        this.g.position.set(g && g.target ? g.target.x : 0, ROOM.floorY + 0.01, g && g.target ? g.target.z : 0);
+      }
     }
   });
 
@@ -2334,7 +2442,7 @@
      watch: the superstructure and mast sit ABAFT of where you stand, the bow
      runs away forward, and the railings are low enough to see over. */
   /* How far above the floor a contact may never come below, in the room. */
-  var AR_CEILING_CLEAR = 2.2;
+  var AR_CEILING_CLEAR = 1.3;
 
   /* Where the floor is, in the coordinates everything else uses. A scanned
      floor plane if we have one; otherwise assume the reference space puts the
@@ -2681,10 +2789,25 @@
       x.lineTo(C + Math.sin(this.sweep) * R, C - Math.cos(this.sweep) * R);
       x.stroke();
 
-      // contacts
       var fx = game.camDir.x, fz = game.camDir.z;
       var fl = Math.sqrt(fx * fx + fz * fz) || 1;
       fx /= fl; fz /= fl;
+
+      // the room's openings, so the scope says where the next one comes from
+      if (this.el.sceneEl.is('ar-mode') && ROOM.ready && ROOM.indoor) {
+        var aps = apertures(), fbk = aperturesAreFallback();
+        for (var q = 0; q < aps.length; q++) {
+          var ax = aps[q].c.x - game.target.x, az = aps[q].c.z - game.target.z;
+          var aup = ax * fx + az * fz, aright = ax * -fz + az * fx;
+          var ak = R / RADAR_RANGE;
+          var apx = C + aright * ak, apy = C - aup * ak;
+          x.strokeStyle = aps[q].label === 'breach' ? 'rgba(255,176,32,0.9)' : (fbk ? 'rgba(94,119,147,0.7)' : 'rgba(56,182,240,0.9)');
+          x.lineWidth = 2.5;
+          x.beginPath(); x.moveTo(apx - 6, apy - 6); x.lineTo(apx + 6, apy - 6); x.lineTo(apx + 6, apy + 6); x.lineTo(apx - 6, apy + 6); x.closePath(); x.stroke();
+        }
+      }
+
+      // contacts
 
       for (var i = 0; i < game.live.length; i++) {
         var el = game.live[i];
@@ -5303,6 +5426,7 @@
       this.spin = 24 + Math.random() * 10;
       this.baseY = this.el.object3D.position.y;
 
+      this.gate = null; this.outside = false;
       this.hp = spec.hp || 1;
       this.maxHp = this.hp;
       this.pistolProof = !!spec.pistolProof;
@@ -5316,6 +5440,11 @@
     },
     remove: function () {
       if (this.engine) { this.engine.stop(); this.engine = null; }
+    },
+    /* Beyond the real wall: tracked on the scope, not drawn in the room. */
+    setHidden: function (h) {
+      if (this.built && this.built.group) { this.built.group.visible = !h; }
+      if (this.hud) { this.hud.visible = !h; }
     },
     onShot: function () {
       // desktop mouse path; shift-click sends a rocket instead
@@ -5354,7 +5483,31 @@
       var game = this.el.sceneEl.components.game;
       if (!game) { return; }
 
-      if (this.move === 'home') {
+      if (this.gate && this.outside) {
+        /* Straight for the opening, at its height, no weave: the wall is
+           real and the way through it is the door. */
+        var gc = this.gate.c;
+        var gx = gc.x - o.position.x, gz = gc.z - o.position.z, gy = gc.y - this.baseY;
+        var gl = Math.sqrt(gx * gx + gz * gz + gy * gy) || 1;
+        var gv = this.data.speed * s;
+        o.position.x += (gx / gl) * gv;
+        o.position.z += (gz / gl) * gv;
+        this.baseY += (gy / gl) * gv;
+        o.rotation.y = Math.atan2(gx, gz);
+        var gout = this.gate.out || this.gate.n;
+        var through = (o.position.x - gc.x) * gout.x + (o.position.z - gc.z) * gout.z;
+        if (through <= 0.15) {
+          this.outside = false;
+          this.setHidden(false);
+          if (this.move !== 'home') {
+            // a crosser now crosses the room, passing near the player
+            var t0 = game.target, side = (Math.random() < 0.5 ? -1 : 1) * (1 + Math.random() * 2);
+            var d0 = new THREE.Vector3(t0.x - o.position.x, 0, t0.z - o.position.z).normalize();
+            var aim0 = new THREE.Vector3(t0.x - d0.z * side, 0, t0.z + d0.x * side);
+            this.setHeading(aim0.sub(new THREE.Vector3(o.position.x, 0, o.position.z)));
+          }
+        }
+      } else if (this.move === 'home') {
         var t = game.target;
         // aim at a point offset from the player, closing that offset only as
         // it gets near — so the approach is a curve, not a straight run-in
@@ -5395,9 +5548,14 @@
       /* In the room, nothing is allowed to come out of the floor. The
          altitudes were written for a player standing on a tower 16 m up; on
          the real floor the same numbers put contacts underfoot. */
-      if (this.el.sceneEl.is('ar-mode')) {
+      if (this.el.sceneEl.is('ar-mode') && !(this.gate && this.outside)) {
         var minY = arFloor() + AR_CEILING_CLEAR;
         if (o.position.y < minY) { o.position.y = minY; this.baseY = minY; }
+        /* Back out through a wall: gone from the room, gone from view. */
+        if (this.gate && ROOM.centre && !this.outside) {
+          var rc = Math.hypot(o.position.x - ROOM.centre.x, o.position.z - ROOM.centre.z);
+          if (rc > ROOM.radius + 0.6) { this.setHidden(true); if (rc > ROOM.radius + 5) { this.alive = false; game.departed(this.el); return; } }
+        }
       }
 
       if (this.built.rotors) {
@@ -6027,13 +6185,41 @@
       this.say(message);
     },
 
-    say: function (msg) {
-      if (!this.toast) { return; }
-      this.toast.textContent = msg;
-      this.toast.classList.add('show');
-      var t = this.toast;
-      clearTimeout(this._toastT);
-      this._toastT = setTimeout(function () { t.classList.remove('show'); }, 1400);
+    say: function (msg, long) {
+      if (this.toast) {
+        this.toast.textContent = msg;
+        this.toast.classList.add('show');
+        var t = this.toast;
+        clearTimeout(this._toastT);
+        this._toastT = setTimeout(function () { t.classList.remove('show'); }, long ? 4200 : 1400);
+      }
+      /* The DOM toast is invisible in a headset. The same line, on a sprite
+         in front of the camera, so a breach or a lost life is actually seen. */
+      var cam = this.el.camera;
+      if (!cam) { return; }
+      if (!this.vrToast) {
+        this.vrToast = spriteCanvas(1024, 112);
+        this.vrToast.renderOrder = 1011;
+        this.vrToast.position.set(0, 0.30, -1.25);
+        this.vrToast.scale.set(0.9, 0.098, 1);
+        this.vrToast.visible = false;
+        cam.add(this.vrToast);
+      }
+      var u = this.vrToast.userData, x = u.ctx;
+      x.clearRect(0, 0, 1024, 112);
+      x.fillStyle = 'rgba(5,13,22,0.82)';
+      x.fillRect(0, 0, 1024, 112);
+      x.fillStyle = '#38B6F0'; x.fillRect(0, 0, 8, 112);
+      x.font = '600 34px "IBM Plex Mono", ui-monospace, monospace';
+      x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#EAF3FB';
+      var line = String(msg);
+      if (x.measureText(line).width > 990) { x.font = '600 26px "IBM Plex Mono", ui-monospace, monospace'; }
+      x.fillText(line, 516, 56);
+      u.tex.needsUpdate = true;
+      this.vrToast.visible = !!(this.el.is && (this.el.is('vr-mode') || this.el.is('ar-mode')));
+      var sp = this.vrToast;
+      clearTimeout(this._vrToastT);
+      this._vrToastT = setTimeout(function () { sp.visible = false; }, long ? 4200 : 1600);
     },
 
     /* --- weapons ------------------------------------------------------ */
@@ -7456,8 +7642,8 @@
       var toWall = new THREE.Vector3().subVectors(c, best.c);
       var along = toWall.dot(best.n);
       c.addScaledVector(best.n, -along);            // drop it onto the wall plane
-      var b = { c: c, n: best.n.clone().negate(), w: 0.9, h: 0.9,
-                label: 'breach', born: performance.now() };
+      var b = { c: c, n: best.n.clone().negate(), out: (best.out || best.n).clone(), w: 0.9, h: 0.9,
+                wide: 0.9, tall: 0.9, label: 'breach', born: performance.now() };
       ROOM.breaches.push(b);
       sfx.leak();
       this.say('BREACH · ' + ROOM.breaches.length + ' OPEN');
@@ -7479,12 +7665,18 @@
          it is seen, which is the whole point: the scope knows before you do. */
       var ap = this.enterPoint();
       if (ap) {
-        var back = 1.2 + Math.random() * 2.6;       // how far outside it starts
-        var jx = (Math.random() - 0.5) * Math.min(1.2, ap.w || 0.8);
-        var jy = (Math.random() - 0.5) * Math.min(0.9, ap.h || 0.8);
-        pos = { x: ap.c.x + ap.n.x * back + jx,
-                y: Math.max(ROOM.floorY + AR_CEILING_CLEAR, ap.c.y + Math.abs(jy)),
-                z: ap.c.z + ap.n.z * back };
+        /* Start well outside, so the scope has it long before the doorway
+           does. It is hidden until it actually crosses the opening: in
+           passthrough the real wall is between you and it. */
+        var out = ap.out || ap.n;
+        var back = 14 + Math.random() * 10;
+        pos = { x: ap.c.x + out.x * back,
+                y: Math.max(ROOM.floorY + 0.6, ap.c.y),
+                z: ap.c.z + out.z * back };
+        if (aperturesAreFallback() && !ROOM.warned) {
+          ROOM.warned = true;
+          this.say('No doors or windows in the room scan \u2014 contacts will use the walls. Add openings in Space Setup.', true);
+        }
       }
       el.setAttribute('position', pos);
       el.setAttribute('target', {
@@ -7494,6 +7686,13 @@
       });
       this.el.appendChild(el);
       this.live.push(el);
+
+      if (ap) {
+        setTimeout(function () {
+          var t = el.components && el.components.target;
+          if (t) { t.gate = ap; t.outside = true; t.setHidden(true); }
+        }, 0);
+      }
 
       /* A swarm has to read as one body moving together, so its members fly a
          shared lane with only a little private wander. They still weave — just
