@@ -842,6 +842,7 @@
     <p id="vrmsg"></p>
 
     <div id="belt2" class="belt">
+      <button class="gun" id="adsbBtn" type="button">ADS-B cards: on</button>
       <button class="gun" id="hrConnect2" type="button">Connect Polar H10</button>
       <span class="hrnote" id="hrNote2">optional &mdash; without one the pulse is simulated</span>
     </div>
@@ -1700,7 +1701,7 @@
      The public feeds send no CORS header, so this talks to a small relay
      (worker.js) rather than to them directly. */
   var LIVE = {
-    on: false, url: null, at: [47.6025, -122.4200], nm: 250,
+    on: false, url: null, at: [47.6025, -122.4200], nm: 250, cards: true,
     note: 'off', count: 0, source: null, lastOk: 0, tried: 0, via: null
   };
 
@@ -1750,6 +1751,7 @@
     }
     if (q.get('nm')) { LIVE.nm = Math.min(500, Math.max(5, +q.get('nm') || 250)); }
     LIVE.on = q.get('air') !== '0';          // on by default now
+    try { LIVE.cards = localStorage.getItem('sentraCards') !== 'off'; } catch (e) {}
     if (feed) { LIVE.url = feed; LIVE.note = 'waiting for your relay'; }
     else { LIVE.note = 'waiting'; }
   }());
@@ -3136,7 +3138,7 @@
           x.fillText('\u25c6 ' + r.label.toUpperCase(), pos.x, pos.y);
           continue;
         }
-        if (r.kind === 'sensor') {
+        if (r.kind === 'sensor' || r.kind === 'adsb') {
           if (i === sel) {
             x.fillStyle = 'rgba(255,176,32,0.20)';
             x.fillRect(pos.x - 14, pos.y - 21, LO.COLW - 34, 42);
@@ -4172,6 +4174,18 @@
   /* How far out a given sensor returns, for this contact. A real aircraft is
      broadcasting its transponder continuously -- that is what ADS-B is -- so
      the squawk is never range-gated for one. */
+  (function () {
+    var b = document.getElementById('adsbBtn');
+    if (!b) { return; }
+    var paint = function () { b.textContent = 'ADS-B cards: ' + (LIVE.cards ? 'on' : 'off'); b.classList.toggle('on', LIVE.cards); };
+    b.addEventListener('click', function () {
+      LIVE.cards = !LIVE.cards;
+      try { localStorage.setItem('sentraCards', LIVE.cards ? 'on' : 'off'); } catch (e) {}
+      paint();
+    });
+    paint();
+  }());
+
   if (window.__radarReady) {
     window.__radarReady(RADARS,
       function () { return RADAR.key; },
@@ -5161,17 +5175,39 @@
      contacts, and only while the RF feed is switched on. */
   function adsbSprite() { return spriteCanvas(640, 176); }
 
+  /* What a transponder record can tell you about danger, honestly: the
+     emergency squawks are the only red; military, rotorcraft, UAV and
+     anything low and close are amber; the rest is an airliner going about
+     its business. */
+  function adsbDanger(a, sh) {
+    var sq = String(a.squawk || '');
+    if (sq === '7500') { return { lvl: 'HIJACK', col: '#FF4D3D' }; }
+    if (sq === '7700') { return { lvl: 'EMERGENCY', col: '#FF4D3D' }; }
+    if (sq === '7600') { return { lvl: 'RADIO FAIL', col: '#FFB020' }; }
+    var cat = String(a.cat || '').toUpperCase();
+    if (cat === 'B6') { return { lvl: 'UAV', col: '#FF4D3D' }; }
+    if (a.mil) { return { lvl: 'MILITARY', col: '#FFB020' }; }
+    if (cat === 'A7') { return { lvl: 'ROTORCRAFT', col: '#FFB020' }; }
+    if (a.altFt < 3000 && a.dst < 3) { return { lvl: 'LOW & CLOSE', col: '#FFB020' }; }
+    return { lvl: 'LOW', col: '#5FD98B' };
+  }
+
   function drawAdsb(sprite, a, sh) {
     var u = sprite.userData;
     var stamp = [a.hex, a.call, a.altFt, Math.round(a.gs), a.squawk, a.dst.toFixed(1), Math.round(a.dir)].join('|');
     if (u.last === stamp) { return; }
     u.last = stamp;
     var x = u.ctx;
+    var dg = adsbDanger(a, sh);
     x.clearRect(0, 0, 640, 176);
     x.fillStyle = 'rgba(5,13,22,0.86)';
     x.fillRect(0, 0, 640, 176);
-    x.fillStyle = a.mil ? '#FFB020' : '#5FD98B';
+    x.fillStyle = dg.col;
     x.fillRect(0, 0, 7, 176);
+    x.textBaseline = 'middle'; x.textAlign = 'right';
+    x.font = '700 20px "IBM Plex Mono", ui-monospace, monospace';
+    x.fillStyle = dg.col;
+    x.fillText('DANGER ' + dg.lvl, 616, 26);
 
     x.textBaseline = 'middle';
     x.textAlign = 'left';
@@ -5515,7 +5551,7 @@
     missile:  { build: buildMissile,  hostile: true,  move: 'home',  speed: [4.5, 7.0],  points: 30,  alt: [13, 20],    hp: 1, pistolProof: true, label: 'Cruise missile' },
     jet:      { build: buildJet,      hostile: true,  move: 'cross', speed: [7.0, 10.0], points: 20,  alt: [17, 27],    hp: 4, label: 'Fast jet', outdoor: true },
     airliner: { build: buildAirliner, hostile: false, move: 'cross', speed: [5.0, 7.0],  points: -60, alt: [26, 36],    hp: 2, label: 'Airliner', outdoor: true },
-    bird:     { build: buildBird,     hostile: false, move: 'cross', speed: [2.6, 4.2],  points: 0,   alt: [13, 21],    hp: 1, label: 'Bird' },
+    bird:     { build: buildBird,     hostile: false, move: 'cross', speed: [2.6, 4.2],  points: 0,   alt: [13, 21],    hp: 1, label: 'Bird', outdoor: true },
 
     /* On the water. rocketOnly means a hull shrugs off small arms: the
        launcher is the only thing that answers them, which is what makes the
@@ -5735,8 +5771,10 @@
       this.setMasked(!!h && hasScreen);
     },
     setMasked: function (on) {
-      if (this.masked === on) { return; }
+      /* Stencil portals proved unreliable in the headset, so the screen is
+         done by line of sight instead (see tick). Nothing to do here. */
       this.masked = on;
+      return;
       var apply = function (o) {
         var mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
         for (var i = 0; i < mats.length; i++) {
@@ -5890,9 +5928,14 @@
           if (!insideRoom(o.position, 6)) { this.alive = false; game.departed(this.el); return; }
         }
       }
-      /* Outdoor-only traffic in the room: never crosses a wall, always seen
-         through the glass. */
-      if (this.outdoor) { this.setMasked(true); }
+      /* Beyond the wall -- an approach not yet through the door, or outdoor
+         traffic that never comes in -- the airframe is drawn only when the
+         line from your eye to it passes through a door, window or breach.
+         Everywhere else the wall is a wall. The bracket stays. */
+      if (game.roomWalls && game.roomWalls() && this.built && this.built.group &&
+          ((this.gate && this.outside) || this.outdoor)) {
+        this.built.group.visible = game.throughOpening(game.target, o.position);
+      }
 
       if (this.built.rotors) {
         for (var i = 0; i < this.built.rotors.length; i++) {
@@ -6026,7 +6069,7 @@
         // the real transponder record, for the aircraft that are real
         if (this.live) {
           if (!this.adsb) { this.adsb = adsbSprite(); this.adsb.renderOrder = 999; this.hud.add(this.adsb); }
-          this.adsb.visible = !!VIEW.on.xpdr && !behindWall;
+          this.adsb.visible = !!VIEW.on.xpdr && LIVE.cards && !behindWall;
           if (this.adsb.visible) {
             drawAdsb(this.adsb, this.live, this.liveShape || liveShape(this.live));
             this.adsb.scale.set(uiSz * 2.0, uiSz * 0.55, 1);
@@ -6054,7 +6097,7 @@
       if (this.move === 'home' && flat < 2.2) {
         this.alive = false;
         game.reached(this.el);
-      } else if (flat > 110 || (this.move !== 'home' && receding && flat > 60 && this.age > 8) || this.age > 150) {
+      } else if (flat > 420 || (this.move !== 'home' && receding && flat > 60 && this.age > 8) || this.age > 420) {
         /* Gone: off the scope, or a crosser well past you and opening the
            range, or simply in the air so long something has gone wrong. A
            wave must never wait on a bird. */
@@ -6796,7 +6839,18 @@
         return;
       }
       this._wallHit = false;
-      for (var j = 0; j < hits.length; j++) { this.destroy(hits[j], 'shotgun'); }
+      /* A pattern takes the nearest thing in the cone, and only whatever is
+         flying within five metres of it -- a tight swarm, not the whole sky. */
+      var hp = new THREE.Vector3(), nearest = null, nd = Infinity, hpos = [];
+      for (var j = 0; j < hits.length; j++) {
+        hits[j].object3D.getWorldPosition(hp);
+        var dj = hp.distanceTo(origin);
+        hpos.push(hp.clone());
+        if (dj < nd) { nd = dj; nearest = j; }
+      }
+      for (j = 0; j < hits.length; j++) {
+        if (j === nearest || hpos[j].distanceTo(hpos[nearest]) <= 5) { this.destroy(hits[j], 'shotgun'); }
+      }
     },
 
     shotgunAt: function (el) {
@@ -7110,20 +7164,22 @@
        launcher can be loaded honestly: one rocket for every missile the wave
        actually contains, plus three in hand. Swarms are drones, so they do
        not draw on it. */
+    /* The whole wave is rolled here and, when the wave is let loose, put in
+       the air at once: every contact at its own range and speed, so their
+       arrivals are spread across about five minutes. Nothing trickles in
+       later; what you see on the scope at the start is the wave. */
+    WAVE_SPAN: 300,
     armWave: function () {
-      this.swarmsLeft = this.swarmCount();
-      this.nextSwarmAt = 5;
+      this.swarmsLeft = 0;
       this.sinceSpawn = 0;
-
       this.mistakes = 0;
       this.queue = [];
-      var missiles = 0, n = this.trickleCount();
+      var missiles = 0, n = this.trickleCount() + this.swarmCount() * this.swarmSize();
       var armoured = 0;
       for (var i = 0; i < n; i++) {
         var name = pickType(this.wave);
         var salvo = (name === 'missile' || name === 'torpedo') ? salvoSize(this.wave) : 1;
         if (name === 'missile') { missiles += salvo; }
-        // everything a rocket is the only answer to has to be paid for
         if (isRocketOnly(name) && TYPES[name].hostile) { armoured += salvo; }
         this.queue.push({ name: name, n: salvo });
       }
@@ -7131,6 +7187,32 @@
       this.waveMissiles = missiles;
       this.waveArmoured = armoured;
       this.rockets = missiles + armoured + ROCKET_SPARES;
+      this.launched = false;
+    },
+
+    /* Put the rolled wave in the air. Arrival times are dealt evenly across
+       the span with a little jitter; each contact's range is then whatever
+       its own speed covers in that time, capped so it stays under the sky. */
+    launchWave: function () {
+      if (this.launched) { return; }
+      this.launched = true;
+      var items = [];
+      for (var q = 0; q < this.queue.length; q++) {
+        for (var k = 0; k < this.queue[q].n; k++) { items.push({ name: this.queue[q].name, salvo: q, k: k }); }
+      }
+      this.queue = []; this.trickleLeft = 0;
+      for (var i = items.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = items[i]; items[i] = items[j]; items[j] = t; }
+      var N = Math.max(1, items.length), span = this.WAVE_SPAN;
+      for (i = 0; i < items.length; i++) {
+        var it = items[i], spec = TYPES[it.name];
+        var slot = 15 + (span - 30) * (i + 0.5) / N + (Math.random() - 0.5) * 18;
+        var speed = rng(spec.speed) * this.speedScale();
+        var dist = Math.min(380, Math.max(45, speed * slot));
+        speed = dist / slot;                                  // arrive when dealt
+        speed = Math.max(spec.speed[0] * 0.5, Math.min(spec.speed[1] * this.speedScale(), speed));
+        this.spawnOne(it.name, Math.random() * Math.PI * 2, 0, { speed: speed, dist: dist });
+      }
+      this.say('WAVE ' + this.wave + ' \u00b7 ' + this.hostilesLeft() + ' HOSTILE IN THE AIR');
     },
 
     /* Four outcomes that matter, and they are not 'did you hit it'.
@@ -7323,7 +7405,9 @@
              '" data-radar="' + RADARS[rr].key + '" title="' + RADARS[rr].blurb.replace(/"/g, '&quot;') + '">' +
              RADARS[rr].name + '</button>';
       }
-      h += '</div><p class="lonote">' + RADAR.blurb + '</p></div>';
+      h += '</div><p class="lonote">' + RADAR.blurb + '</p>' +
+           '<div class="roevals"><button class="roev' + (LIVE.cards ? ' hot' : '') + '" data-adsb="1">' +
+           'Transponder cards on real aircraft: ' + (LIVE.cards ? 'ON' : 'OFF') + '</button></div></div>';
 
       h += '<div class="locols">';
 
@@ -7407,6 +7491,13 @@
         self.wireLoadout();
       }
 
+      host.querySelectorAll('[data-adsb]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          LIVE.cards = !LIVE.cards;
+          try { localStorage.setItem('sentraCards', LIVE.cards ? 'on' : 'off'); } catch (e) {}
+          repaint();
+        });
+      });
       host.querySelectorAll('[data-radar]').forEach(function (b) {
         b.addEventListener('click', function () {
           setRadar(b.getAttribute('data-radar'));
@@ -7546,7 +7637,8 @@
        so whichever surface you set it on, it is one setup. */
     loRows: function () {
       var rows = [{ kind: 'advice', label: 'take the classifier\u2019s picks' },
-                  { kind: 'sensor', label: 'sensor: ' + RADAR.name }], i;
+                  { kind: 'sensor', label: 'sensor: ' + RADAR.name },
+                  { kind: 'adsb', label: 'transponder cards: ' + (LIVE.cards ? 'on' : 'off') }], i;
       for (i = 0; i < FIELDS.length; i++) {
         if (LOADOUT.COSTED.indexOf(FIELDS[i].key) === -1) { continue; }
         rows.push({ kind: 'feed', key: FIELDS[i].key, label: FIELDS[i].name });
@@ -7600,6 +7692,12 @@
         this._restartArmed = false;
         this.loOn = false;
         this.restartRun();
+        return;
+      }
+      if (r.kind === 'adsb') {
+        LIVE.cards = !LIVE.cards;
+        try { localStorage.setItem('sentraCards', LIVE.cards ? 'on' : 'off'); } catch (e) {}
+        this.drawLoadoutPanel();
         return;
       }
       if (r.kind === 'sensor') {
@@ -8146,7 +8244,7 @@
       var el = document.createElement('a-entity');
       el.setAttribute('class', 'target');
 
-      var r = 70 + Math.random() * 25 + (lag || 0);     // just inside the 100 m scope
+      var r = (opts.dist !== undefined ? opts.dist : 70 + Math.random() * 25) + (lag || 0);
       var y = opts.y !== undefined ? opts.y : rng(spec.alt);
       var pos = { x: Math.cos(a) * r, y: y, z: Math.sin(a) * r };
 
@@ -8160,7 +8258,7 @@
       if (outdoor) {
         /* Airliners and jets do not come through your door. They pass
            outside, lower than over the ship so a window actually frames them. */
-        var far = Math.max(ROOM.radius + 20, 30) + Math.random() * 30;
+        var far = opts.dist !== undefined ? Math.max(ROOM.radius + 20, opts.dist) : Math.max(ROOM.radius + 20, 30) + Math.random() * 30;
         pos = { x: (ROOM.centre ? ROOM.centre.x : 0) + Math.cos(a) * far, y: 5 + Math.random() * 9,
                 z: (ROOM.centre ? ROOM.centre.z : 0) + Math.sin(a) * far };
       }
@@ -8169,7 +8267,7 @@
            does. It is hidden until it actually crosses the opening: in
            passthrough the real wall is between you and it. */
         var out = ap.out || ap.n;
-        var back = 45 + Math.random() * 30;
+        var back = opts.dist !== undefined ? Math.max(20, opts.dist) : 45 + Math.random() * 30;
         pos = { x: ap.c.x + out.x * back,
                 y: Math.max(ROOM.floorY + 0.6, ap.c.y),
                 z: ap.c.z + out.z * back };
@@ -8227,7 +8325,7 @@
           if (!c) { return; }
           // How close the crossing path passes. Birds come in low and near so
           // they genuinely stray into shotgun range — that choice is the game.
-          var band = name === 'bird' ? [1.5, 8]
+          var band = name === 'bird' ? [30, 45]
                    : name === 'airliner' ? [8, 26]
                    : name === 'fishing' ? [9, 24]      // trawlers keep their distance
                    : [5, 18];
@@ -8470,7 +8568,7 @@
 
       this.elapsed += s;
       this.waveTime += s;
-      if (this.swarmsLeft > 0 && this.waveTime >= this.nextSwarmAt) { this.spawnSwarm(); }
+      if (!this.launched) { this.launchWave(); }
       /* A wave is a fixed number of hostiles, not a minute on the clock. It
          ends when every one of them is down, through, or gone -- and the next
          does not start until the breath between them is taken or skipped. */
@@ -8495,13 +8593,7 @@
       this.stepReach(time);
       this.stepArrow();
 
-      this.sinceSpawn += dt;
-      // sky empty of threats but the wave still owes some: send now
-      if (this.queue && this.queue.length && !this.anyHostileUp()) { this.sinceSpawn = 1e9; }
-      if (this.sinceSpawn >= this.spawnInterval()) {
-        this.sinceSpawn = 0;
-        this.spawn();
-      }
+      // nothing trickles in: the wave was launched whole
     }
   });
 
