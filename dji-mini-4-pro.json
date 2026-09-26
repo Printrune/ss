@@ -1,0 +1,119 @@
+{
+  "id": "dji-mini-4-pro",
+  "kind": "uas-asset",
+  "schemaVersion": "0.1",
+  "name": "DJI Mini 4 Pro",
+  "manufacturer": "SZ DJI Technology Co., Ltd.",
+  "class": "multirotor-consumer",
+  "roles": [
+    "civilian"
+  ],
+  "provenance": {
+    "sourceUrl": "https://www.dji.com/mini-4-pro/specs",
+    "retrieved": "2026-09-26",
+    "dataClass": "commercial-public",
+    "licenceNote": "Manufacturer spec page, \u00a9 DJI. Values quoted for interoperability; no DJI material reproduced.",
+    "notes": "Sub-250 g consumer class \u2014 the aircraft most likely to be in the sky near a Soldier and most likely to be harmless. Weight is published as '<249 g'."
+  },
+  "spec": {
+    "physical": {
+      "takeoffWeightG": 249,
+      "dimensionsFoldedMm": [
+        148,
+        94,
+        64
+      ],
+      "dimensionsUnfoldedMm": [
+        298,
+        373,
+        101
+      ],
+      "wingspanMm": null,
+      "payloadCapacityG": null,
+      "articulation": "folding arms"
+    },
+    "performance": {
+      "maxHorizontalSpeedMps": 16,
+      "cruiseSpeedMps": null,
+      "speedModesMps": {
+        "sport": 16
+      },
+      "maxAscentSpeedMps": 5,
+      "maxDescentSpeedMps": 5,
+      "maxTakeoffAltitudeM": 4000,
+      "maxWindResistanceMps": 10.7,
+      "maxFlightTimeMin": 34,
+      "maxFlightDistanceKm": 18,
+      "maxTransmissionKm": 20
+    },
+    "power": {
+      "batteryCapacityMah": 2590,
+      "batteryEnergyWh": 18.96,
+      "nominalVoltage": null
+    },
+    "sensors": {
+      "camera": "1/1.3-inch CMOS, 48 MP, 24 mm equiv., FOV 82.1\u00b0",
+      "obstacleSensing": "omnidirectional binocular vision + 3D infrared; forward range 0.5\u201318 m",
+      "gnss": "GPS + Galileo + BeiDou"
+    }
+  },
+  "derived": {
+    "rotorCount": {
+      "value": 4,
+      "basis": "Quadcopter form evident from product imagery; not stated on the spec page."
+    },
+    "propulsion": {
+      "value": "electric brushless",
+      "basis": "Consumer multirotor norm; motor type not published."
+    },
+    "remoteId": {
+      "value": "broadcast (FAA Remote ID compliant)",
+      "basis": "DJI consumer aircraft broadcast Remote ID in regulated markets; drives the XPDR cue."
+    },
+    "cruiseSpeed": {
+      "value": 6,
+      "basis": "Lower bound of arena speed band. Spec publishes only the S-mode maximum; a normal-mode cruise is assumed at ~6 m/s."
+    }
+  },
+  "signature": {
+    "profile": "QUADROTOR",
+    "emission": "ELECTRIC",
+    "transponder": "RID",
+    "acoustic": "light rotor buzz",
+    "visual": "small, hovering or slow; white/green strobe and arm LEDs"
+  },
+  "vulnerability": {
+    "hitsToKill": {
+      "pistol": 1,
+      "shotgun": 1,
+      "rocket": 1
+    },
+    "notes": "Sub-250 g; anything kills it. The cost of engaging it is not ammunition, it is a civilian aircraft down."
+  },
+  "rendering": {
+    "gltf": null,
+    "procedural": "quad",
+    "colour": "#B9C3CE",
+    "lights": "white strobe, green arm LEDs"
+  },
+  "behaviors": [
+    "cross-loiter"
+  ],
+  "training": {
+    "arenaScale": 0.25,
+    "bind": {
+      "contactType": "quad",
+      "hostile": false,
+      "speedMps": [
+        1.5,
+        4.0
+      ],
+      "altBandM": [
+        10,
+        18
+      ],
+      "points": -40,
+      "hp": 1
+    }
+  }
+}

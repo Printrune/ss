@@ -1,0 +1,113 @@
+{
+  "id": "dji-avata-2",
+  "kind": "uas-asset",
+  "schemaVersion": "0.1",
+  "name": "DJI Avata 2",
+  "manufacturer": "SZ DJI Technology Co., Ltd.",
+  "class": "multirotor-fpv",
+  "roles": [
+    "hostile-threat"
+  ],
+  "provenance": {
+    "sourceUrl": "https://www.dji.com/avata-2/specs",
+    "retrieved": "2026-09-26",
+    "dataClass": "commercial-public",
+    "licenceNote": "Manufacturer spec page, \u00a9 DJI. Values quoted for interoperability; no DJI material reproduced. Page footnote: 'Data is for reference only.'",
+    "notes": "FPV representative. Chosen over an open 5-inch freestyle build because it has a single authoritative manufacturer spec sheet. EU manual-mode speed is capped at 19 m/s; the FCC figure is used here."
+  },
+  "spec": {
+    "physical": {
+      "takeoffWeightG": 377,
+      "dimensionsFoldedMm": null,
+      "dimensionsUnfoldedMm": [
+        185,
+        212,
+        64
+      ],
+      "wingspanMm": null,
+      "payloadCapacityG": null,
+      "articulation": "non-folding ducted airframe"
+    },
+    "performance": {
+      "maxHorizontalSpeedMps": 27,
+      "cruiseSpeedMps": null,
+      "speedModesMps": {
+        "normal": 8,
+        "sport": 16,
+        "manual": 27
+      },
+      "maxAscentSpeedMps": 9,
+      "maxDescentSpeedMps": 9,
+      "maxTakeoffAltitudeM": 5000,
+      "maxWindResistanceMps": 10.7,
+      "maxFlightTimeMin": 23,
+      "maxFlightDistanceKm": 13,
+      "maxTransmissionKm": 13
+    },
+    "power": {
+      "batteryCapacityMah": 2150,
+      "batteryEnergyWh": 31.7,
+      "nominalVoltage": 14.76
+    },
+    "sensors": {
+      "camera": "1/1.3-inch, 12 MP, FOV 155\u00b0",
+      "obstacleSensing": "downward and backward visual positioning only; no forward obstacle avoidance",
+      "gnss": "GPS + Galileo + BeiDou"
+    }
+  },
+  "derived": {
+    "rotorCount": {
+      "value": 4,
+      "basis": "Quadcopter form evident from product imagery; rotor count is not stated on the spec page."
+    },
+    "propulsion": {
+      "value": "electric brushless, ducted",
+      "basis": "Ducted cinewhoop layout visible in imagery; motor type not published."
+    },
+    "remoteId": {
+      "value": "broadcast when operated per regulation; frequently absent on hostile-use FPV airframes",
+      "basis": "Regulatory context, not a spec value. Drives the XPDR cue below."
+    }
+  },
+  "signature": {
+    "profile": "QUADROTOR",
+    "emission": "ELECTRIC",
+    "transponder": "NONE",
+    "acoustic": "high-pitched ducted rotor whine",
+    "visual": "small, fast, low; no navigation lights in FPV use"
+  },
+  "vulnerability": {
+    "hitsToKill": {
+      "pistol": 2,
+      "shotgun": 1,
+      "rocket": 1
+    },
+    "notes": "377 g airframe; soft. Speed, not armour, is its defence."
+  },
+  "rendering": {
+    "gltf": null,
+    "procedural": "drone",
+    "colour": "#2E3542",
+    "lights": "single red status LED"
+  },
+  "behaviors": [
+    "home-weave"
+  ],
+  "training": {
+    "arenaScale": 0.25,
+    "bind": {
+      "contactType": "drone",
+      "hostile": true,
+      "speedMps": [
+        2.0,
+        6.75
+      ],
+      "altBandM": [
+        12,
+        22
+      ],
+      "points": 10,
+      "hp": 2
+    }
+  }
+}

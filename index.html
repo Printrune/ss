@@ -764,7 +764,7 @@
       <a-entity id="handL" laser-controls="hand: left"  shooter="weapon: shotgun">
         <a-entity class="gunmodel" weapon-model="weapon: shotgun"></a-entity>
         <a-entity position="0 0.09 0.02" rotation="-50 0 0"
-                  canvas-label="value: 30m; label: SHOTGUN; worldW: 0.1; tone: amber"></a-entity>
+                  canvas-label="value: 50m; label: SHOTGUN; worldW: 0.1; tone: amber"></a-entity>
       </a-entity>
       <a-entity id="handR" laser-controls="hand: right" shooter="weapon: rocket">
         <a-entity class="gunmodel" weapon-model="weapon: rocket"></a-entity>
@@ -799,7 +799,7 @@
       <div id="toast"></div>
     </div>
     <div id="guns">
-      <button class="gun on" id="gunSg" type="button"><span class="key">1</span> Shotgun <span class="rng" id="sgRange">30 m</span></button>
+      <button class="gun on" id="gunSg" type="button"><span class="key">1</span> Shotgun <span class="rng" id="sgRange">50 m</span></button>
       <button class="gun rk" id="gunRk" type="button"><span class="key">2</span> Rocket</button>
       <button class="gun ps" id="gunPs" type="button"><span class="key">3</span> Pistol <span class="inf">&infin;</span></button>
     </div>
@@ -2409,7 +2409,7 @@
     init: function () {
       var g = new THREE.Group();
       [[2, 0x2A4A66, 0.30], [6, 0x2A4A66, 0.24],
-       [12, 0x2A4A66, 0.20], [30, AMBER, 0.55], [60, 0x2A4A66, 0.14]].forEach(function (spec) {
+       [20, 0x2A4A66, 0.20], [50, AMBER, 0.55], [80, 0x2A4A66, 0.14]].forEach(function (spec) {
         var m = new THREE.Mesh(
           new THREE.RingGeometry(spec[0] - 0.035, spec[0] + 0.035, 96),
           new THREE.MeshBasicMaterial({ color: spec[1], transparent: true,
@@ -2707,7 +2707,7 @@
       ring.position.z = 16.02;            // the deck, not the water (this entity is rotated flat,
                                          // so its local z is world height)
       // 12 m is the shotgun's reach, so it gets the bright marking
-      [[10, 0x2A4A66, 0.20], [20, 0x2A4A66, 0.22], [30, AMBER, 0.50], [60, 0x2A4A66, 0.15]]
+      [[20, 0x2A4A66, 0.20], [35, 0x2A4A66, 0.22], [50, AMBER, 0.50], [80, 0x2A4A66, 0.15]]
         .forEach(function (spec) {
           var m = new THREE.Mesh(
             new THREE.RingGeometry(spec[0] - 0.07, spec[0] + 0.07, 80),
@@ -5412,9 +5412,9 @@
     /* 'drone' and 'quad' are placeholders until the Verse catalogue loads:
        loadCatalogue() rebinds speed, altitude, hp, points, hostility, label
        and sensor signature from the catalogued commercial UAS manifests. */
-    drone:    { build: buildDrone,    hostile: true,  move: 'home',  speed: [1.4, 3.6],  points: 10,  alt: [12, 22],    hp: 3, label: 'FPV UAS' },
-    quad:     { build: buildQuad,     hostile: false, move: 'cross', speed: [0.8, 2.1],  points: -40, alt: [10, 18],    hp: 1, label: 'Consumer UAS' },
-    vtol:     { build: buildVtol,     hostile: false, move: 'cross', speed: [1.6, 2.6],  points: -60, alt: [18, 28],    hp: 4, label: 'Friendly UAS', outdoor: true, friendly: true },
+    drone:    { build: buildDrone,    hostile: true,  move: 'home',  speed: [2.0, 6.8],  points: 10,  alt: [12, 22],    hp: 3, label: 'FPV UAS' },
+    quad:     { build: buildQuad,     hostile: false, move: 'cross', speed: [1.5, 4.0],  points: -40, alt: [10, 18],    hp: 1, label: 'Consumer UAS' },
+    vtol:     { build: buildVtol,     hostile: false, move: 'cross', speed: [3.0, 4.0],  points: -60, alt: [18, 28],    hp: 4, label: 'Friendly UAS', outdoor: true, friendly: true },
     missile:  { build: buildMissile,  hostile: true,  move: 'home',  speed: [4.5, 7.0],  points: 30,  alt: [13, 20],    hp: 1, pistolProof: true, label: 'Cruise missile' },
     jet:      { build: buildJet,      hostile: true,  move: 'cross', speed: [7.0, 10.0], points: 20,  alt: [17, 27],    hp: 4, label: 'Fast jet', outdoor: true },
     airliner: { build: buildAirliner, hostile: false, move: 'cross', speed: [5.0, 7.0],  points: -60, alt: [26, 36],    hp: 2, label: 'Airliner', outdoor: true },
@@ -5828,7 +5828,7 @@
 
         this.track = trackQuality(dist, this);
         // each readout answers to its own switch
-        var behindWall = !!this.throughWall || (!!this.outdoor && this.el.sceneEl.is('ar-mode'));
+        var behindWall = !!this.throughWall;
         this.iff.visible = !!VIEW.on.ring;
         this.dist.visible = !!VIEW.on.range;
         var panelOn = (VIEW.on.speed || VIEW.on.size || VIEW.on.xpdr) && !behindWall;
@@ -5917,7 +5917,7 @@
       if (this.move === 'home' && flat < 2.2) {
         this.alive = false;
         game.reached(this.el);
-      } else if (flat > 90) {
+      } else if (flat > 130) {
         this.alive = false;
         game.departed(this.el);
       }
@@ -6075,7 +6075,7 @@
   var ROCKET_SPARES = 3;      // on top of one per contact only a rocket can kill
   var LIVES = 10;             // and only a hostile reaching you takes one
   var LAST_LEVEL = 5;         // the run is five levels, then it is over
-  var SHOTGUN_RANGE = 30;
+  var SHOTGUN_RANGE = 50;
   var SHOTGUN_DEG = 9;
   var BLAST_RADIUS = 5;
 
@@ -7784,8 +7784,8 @@
     },
 
     spawnSwarm: function () {
-      if (this.live.length >= this.HARD_CAP) { return; }
-      var n = Math.min(this.swarmSize(), this.HARD_CAP - this.live.length);
+      if (this.synthCount() >= this.HARD_CAP) { return; }
+      var n = Math.min(this.swarmSize(), this.HARD_CAP - this.synthCount());
       var a = Math.random() * Math.PI * 2;
       var speed = rng(TYPES.drone.speed);
       var base = rng(TYPES.drone.alt);
@@ -7822,6 +7822,18 @@
       return true;
     },
 
+    /* Real aircraft from the feed sit in the same list, and there can be
+       thirty of them. They must not count against the wave's ceiling or the
+       sky goes quiet the moment the feed connects. */
+    synthCount: function () {
+      var n = 0;
+      for (var i = 0; i < this.live.length; i++) {
+        var c = this.live[i].components.target;
+        if (!c || !c.live) { n++; }
+      }
+      return n;
+    },
+
     anyHostileUp: function () {
       for (var i = 0; i < this.live.length; i++) {
         var c = this.live[i].components.target;
@@ -7835,11 +7847,11 @@
     spawn: function () {
       if (!this.queue || !this.queue.length) { return; }
       var cap = this.liveCap();
-      if (this.live.length >= cap) { return; }
+      if (this.synthCount() >= cap) { return; }
 
       var item = this.queue.shift();
       var sent = 0;
-      for (var i = 0; i < item.n && this.live.length < cap; i++) {
+      for (var i = 0; i < item.n && this.synthCount() < cap; i++) {
         // fan the salvo slightly in bearing and stagger it in depth
         this.spawnOne(item.name, Math.random() * Math.PI * 2, i * 2.4);
         sent++;
@@ -7898,7 +7910,7 @@
       var el = document.createElement('a-entity');
       el.setAttribute('class', 'target');
 
-      var r = 26 + Math.random() * 10 + (lag || 0);
+      var r = 70 + Math.random() * 25 + (lag || 0);     // just inside the 100 m scope
       var y = opts.y !== undefined ? opts.y : rng(spec.alt);
       var pos = { x: Math.cos(a) * r, y: y, z: Math.sin(a) * r };
 
@@ -7912,7 +7924,7 @@
       if (outdoor) {
         /* Airliners and jets do not come through your door. They pass
            outside, lower than over the ship so a window actually frames them. */
-        var far = Math.max(ROOM.radius + 8, 14) + Math.random() * 12;
+        var far = Math.max(ROOM.radius + 20, 30) + Math.random() * 30;
         pos = { x: (ROOM.centre ? ROOM.centre.x : 0) + Math.cos(a) * far, y: 5 + Math.random() * 9,
                 z: (ROOM.centre ? ROOM.centre.z : 0) + Math.sin(a) * far };
       }
@@ -7921,7 +7933,7 @@
            does. It is hidden until it actually crosses the opening: in
            passthrough the real wall is between you and it. */
         var out = ap.out || ap.n;
-        var back = 14 + Math.random() * 10;
+        var back = 45 + Math.random() * 30;
         pos = { x: ap.c.x + out.x * back,
                 y: Math.max(ROOM.floorY + 0.6, ap.c.y),
                 z: ap.c.z + out.z * back };
