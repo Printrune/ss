@@ -487,6 +487,8 @@
   .lowt[disabled] { opacity: .3; cursor: default; }
   .lowt.none { border: 0; text-align: center; color: rgba(120,146,174,.35); }
   .roeax { margin-bottom: 9px; }
+  .sensorrow { margin: 4px 0 14px; }
+  .sensorrow .roev { font-size: 11px; }
   .roelab { font-family: "Saira", system-ui, sans-serif; font-size: 10px;
             font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
             color: var(--steel); }
@@ -2899,11 +2901,39 @@
 
       // contacts
 
+      if (RADAR.rf) {
+        x.fillStyle = 'rgba(94,119,147,0.85)';
+        x.font = '600 12px "IBM Plex Mono", ui-monospace, monospace';
+        x.textAlign = 'center';
+        x.fillText('RF \u00b7 DIRECTION ONLY', C, C + R - 14);
+      }
       for (var i = 0; i < game.live.length; i++) {
         var el = game.live[i];
         var c = el.components && el.components.target;
         if (!c || !c.alive) { continue; }
+        if (!sensorSees(c)) { continue; }
         el.object3D.getWorldPosition(this.tPos);
+        if (RADAR.rf) {
+          /* A wedge, not a blip: bearing to within the datasheet's 30
+             degrees, strength falling off with distance, no range at all. */
+          var wx = this.tPos.x - game.target.x, wz = this.tPos.z - game.target.z;
+          var wflat = Math.sqrt(wx * wx + wz * wz) || 1;
+          var wup = wx * fx + wz * fz, wright = wx * -fz + wz * fx;
+          var ang = Math.atan2(wright, wup) + c.rfJit;
+          var half = (RADAR.df || 30) * Math.PI / 360;
+          var str = Math.max(0.12, Math.min(0.85, 1 / (1 + Math.pow(wflat / 45, 2))));
+          var wfr = iffFriend(c, wflat);
+          x.fillStyle = (wfr ? 'rgba(95,217,139,' : 'rgba(255,77,61,') + str + ')';
+          x.beginPath(); x.moveTo(C, C);
+          x.arc(C, C, R - 2, ang - half - Math.PI / 2, ang + half - Math.PI / 2);
+          x.closePath(); x.fill();
+          x.fillStyle = wfr ? '#5FD98B' : '#FF4D3D';
+          x.font = '700 11px "IBM Plex Mono", ui-monospace, monospace';
+          x.textAlign = 'center';
+          var lx = C + Math.sin(ang) * (R - 26), ly = C - Math.cos(ang) * (R - 26);
+          x.fillText(typeLabel(c.data.type).toUpperCase().slice(0, 12), lx, ly);
+          continue;
+        }
 
         var dx = this.tPos.x - game.target.x;
         var dz = this.tPos.z - game.target.z;
@@ -2922,10 +2952,11 @@
           edge = true;
         }
 
-        // every blip is a neutral contact; brightness is how well it is tracked
+        // friend or unknown, same rule as the bracket; brightness is track quality
         var tq = c.track === undefined ? 0 : c.track;
-        var rgb = iffRGB(tq);
-        var col = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
+        var fr = iffFriend(c, flat);
+        var tt = 0.55 + 0.45 * Math.max(0, Math.min(1, tq / 100));
+        var col = fr ? 'rgba(95,217,139,' + tt + ')' : 'rgba(255,77,61,' + tt + ')';
         x.globalAlpha = edge ? 0.5 : 1;
 
         x.strokeStyle = col;
@@ -3090,6 +3121,19 @@
           x.font = '700 27px "IBM Plex Mono", ui-monospace, monospace';
           x.fillStyle = '#38B6F0';
           x.fillText('\u25c6 ' + r.label.toUpperCase(), pos.x, pos.y);
+          continue;
+        }
+        if (r.kind === 'sensor') {
+          if (i === sel) {
+            x.fillStyle = 'rgba(255,176,32,0.20)';
+            x.fillRect(pos.x - 14, pos.y - 21, LO.COLW - 34, 42);
+            x.fillStyle = '#FFB020';
+            x.fillRect(pos.x - 14, pos.y - 21, 6, 42);
+          }
+          x.textAlign = 'left';
+          x.font = '700 27px "IBM Plex Mono", ui-monospace, monospace';
+          x.fillStyle = '#CFE0F0';
+          x.fillText('\u25ce ' + r.label.toUpperCase(), pos.x, pos.y);
           continue;
         }
         if (r.kind === 'feed') {
@@ -4080,7 +4124,16 @@
       blurb: 'Past that the beam climbs above the weather it is looking for.' },
     { key: 'airdef', name: 'LONG-RANGE AIR DEFENCE', span: '200-350+ nm',
       nm: 250, gain: 3.10,
-      blurb: 'Range depends on power and on how big the target is.' }
+      blurb: 'Range depends on power and on how big the target is.' },
+    /* Not a radar. A body-worn passive RF detector, as the datasheet describes
+       it: hears a drone's own transmissions and its controller's, classifies
+       them against a drone library, gives a direction to within 30 degrees
+       and no range at all, and alerts inside ten seconds. Anything that is
+       not transmitting -- a bird, a missile, a jet -- does not exist to it.
+       Figures from mydefence.com, Wingman 103/105 datasheet, Aug 2025. */
+    { key: 'wingman', name: 'WINGMAN 105 \u00b7 WORN RF', span: '\u2264 6 km \u00b7 360\u00b0',
+      nm: 3.24, gain: 3.20, rf: true, df: 30, latency: [3, 10],
+      blurb: 'Passive RF, 200 MHz\u20136 GHz with the Wideband XF antenna. Hears drones and their controllers and names them from its library. Direction to \u00b130\u00b0, no range, alert in under 10 s. Silent things are invisible to it.' }
   ];
 
   var RADAR = RADARS[2];                       // airport surveillance by default
@@ -4112,7 +4165,27 @@
       function (k) { setRadar(k); });
   }
 
+  /* ---- the passive RF model ------------------------------------------
+     Under the Wingman a contact is either heard or it is not. Heard means it
+     transmits (the catalogued UAS do; ADS-B does) and the detector has had
+     its few seconds. Once heard, the library match arrives whole: what it
+     is, on what band. What never arrives is range, size or speed. */
+  function rfDetectable(c) {
+    return !!(c && (c.live || (c.spec && c.spec.rf)));
+  }
+  function rfHeard(c) {
+    if (!RADAR.rf) { return true; }
+    if (!rfDetectable(c)) { return false; }
+    return performance.now() >= (c.rfAt || 0);
+  }
+  function sensorSees(c) { return RADAR.rf ? rfHeard(c) : true; }
+  function sensorGivesRange() { return !RADAR.rf; }
+
   function cueAt(i, c) {
+    if (RADAR.rf) {
+      if (!rfHeard(c)) { return -1; }
+      return CUES[i].key === 'XPDR' ? Infinity : -1;   // library match, nothing else
+    }
     if (c && c.live && CUES[i].key === 'XPDR') { return Infinity; }
     return CUES[i].at * RADAR.gain;
   }
@@ -5412,13 +5485,13 @@
     /* 'drone' and 'quad' are placeholders until the Verse catalogue loads:
        loadCatalogue() rebinds speed, altitude, hp, points, hostility, label
        and sensor signature from the catalogued commercial UAS manifests. */
-    drone:    { build: buildDrone,    hostile: true,  move: 'home',  speed: [2.0, 6.8],  points: 10,  alt: [12, 22],    hp: 3, label: 'FPV UAS' },
-    quad:     { build: buildQuad,     hostile: false, move: 'cross', speed: [1.5, 4.0],  points: -40, alt: [10, 18],    hp: 1, label: 'Consumer UAS' },
-    vtol:     { build: buildVtol,     hostile: false, move: 'cross', speed: [3.0, 4.0],  points: -60, alt: [18, 28],    hp: 4, label: 'Friendly UAS', outdoor: true, friendly: true },
+    drone:    { build: buildDrone,    hostile: true,  move: 'home',  speed: [2.0, 6.8],  points: 10,  alt: [12, 22],    hp: 3, label: 'FPV UAS', rf: true },
+    quad:     { build: buildQuad,     hostile: false, move: 'cross', speed: [1.5, 4.0],  points: -40, alt: [10, 18],    hp: 1, label: 'Consumer UAS', rf: true },
+    vtol:     { build: buildVtol,     hostile: false, move: 'cross', speed: [3.0, 4.0],  points: -60, alt: [18, 28],    hp: 4, label: 'Friendly UAS', outdoor: true, friendly: true, rf: true },
     missile:  { build: buildMissile,  hostile: true,  move: 'home',  speed: [4.5, 7.0],  points: 30,  alt: [13, 20],    hp: 1, pistolProof: true, label: 'Cruise missile' },
     jet:      { build: buildJet,      hostile: true,  move: 'cross', speed: [7.0, 10.0], points: 20,  alt: [17, 27],    hp: 4, label: 'Fast jet', outdoor: true },
     airliner: { build: buildAirliner, hostile: false, move: 'cross', speed: [5.0, 7.0],  points: -60, alt: [26, 36],    hp: 2, label: 'Airliner', outdoor: true },
-    bird:     { build: buildBird,     hostile: false, move: 'cross', speed: [2.6, 4.2],  points: -25, alt: [13, 21],    hp: 1, label: 'Bird' },
+    bird:     { build: buildBird,     hostile: false, move: 'cross', speed: [2.6, 4.2],  points: 0,   alt: [13, 21],    hp: 1, label: 'Bird' },
 
     /* On the water. rocketOnly means a hull shrugs off small arms: the
        launcher is the only thing that answers them, which is what makes the
@@ -5605,6 +5678,10 @@
       this.baseY = this.el.object3D.position.y;
 
       this.gate = null; this.outside = false; this.masked = false; this.outdoor = false; this.warned = false;
+      // the detector's own clock: born now, heard a few seconds from now
+      this.rfAt = performance.now() + 3000 + Math.random() * 7000;
+      this.rfJit = (Math.random() - 0.5) * 20 * Math.PI / 180;     // within the ±30° it promises
+      this.rfSaid = false;
       this.hp = spec.hp || 1;
       this.maxHp = this.hp;
       this.pistolProof = !!spec.pistolProof;
@@ -5829,9 +5906,17 @@
         this.track = trackQuality(dist, this);
         // each readout answers to its own switch
         var behindWall = !!this.throughWall;
-        this.iff.visible = !!VIEW.on.ring;
-        this.dist.visible = !!VIEW.on.range;
-        var panelOn = (VIEW.on.speed || VIEW.on.size || VIEW.on.xpdr) && !behindWall;
+        var seen = sensorSees(this);
+        if (RADAR.rf && seen && !this.rfSaid && !this.live) {
+          this.rfSaid = true;
+          var relB = Math.atan2(dcx, -dcz) - Math.atan2(game.camDir.x, -game.camDir.z);
+          var clock = ((Math.round(relB / (Math.PI / 6)) % 12) + 12) % 12; clock = clock === 0 ? 12 : clock;
+          game.say('RF \u00b7 ' + typeLabel(this.data.type).toUpperCase() + ' \u00b7 ' + clock + " O'CLOCK");
+          sfx.ping(); game.rumble(null, 0.5, 120);
+        }
+        this.iff.visible = !!VIEW.on.ring && seen;
+        this.dist.visible = !!VIEW.on.range && seen && sensorGivesRange();
+        var panelOn = (VIEW.on.speed || VIEW.on.size || VIEW.on.xpdr) && !behindWall && seen;
         this.evid.visible = !!panelOn;
         drawIff(this.iff, this, dist, this.track);
         this.iff.scale.set(ringSz, ringSz, 1);
@@ -5886,7 +5971,7 @@
         drawAI(this.aiTag, this.ai, this.delegated);
         this.aiTag.scale.set(uiSz * 1.45, uiSz * 0.656, 1);
         this.aiTag.position.set(anchor + uiSz * 0.78, uiSz * 0.2, 0);
-        this.aiTag.visible = !!VIEW.on.ai && !behindWall;
+        this.aiTag.visible = !!VIEW.on.ai && !behindWall && seen;
         this.aiTag.material.opacity = this.ai ? 0.97 : 0;
 
         // the real transponder record, for the aircraft that are real
@@ -5982,6 +6067,23 @@
   /* ------------------------------------------------------------ shooter */
   AFRAME.registerComponent('shooter', {
     schema: { weapon: { default: 'shotgun' } },
+    /* Each frame: read where the controller is actually pointing (the
+       target ray, which A-Frame's raycaster already tracks), remember it for
+       the trigger, and turn the gun model to lie along it so the barrel goes
+       where the shot goes. */
+    tick: function () {
+      var rc = this.el.components.raycaster;
+      if (!rc || !rc.raycaster) { return; }
+      var d = rc.raycaster.ray.direction;
+      if (!d || d.lengthSq() < 0.5) { return; }
+      if (!this.aimDir) { this.aimDir = new THREE.Vector3(); this._q = new THREE.Quaternion(); this._l = new THREE.Vector3(); this._fwd = new THREE.Vector3(0, 0, -1); }
+      this.aimDir.copy(d).normalize();
+      var mdl = this.el.querySelector('.gunmodel');
+      if (!mdl) { return; }
+      this.el.object3D.getWorldQuaternion(this._q).invert();
+      this._l.copy(this.aimDir).applyQuaternion(this._q).normalize();
+      mdl.object3D.quaternion.setFromUnitVectors(this._fwd, this._l);
+    },
     init: function () {
       this.last = 0;
       this.weapon = this.data.weapon;
@@ -6061,9 +6163,13 @@
 
       var origin = new THREE.Vector3();
       this.el.object3D.getWorldPosition(origin);
-      var dir = new THREE.Vector3(0, 0, -1)
-        .applyQuaternion(this.el.object3D.getWorldQuaternion(new THREE.Quaternion()))
-        .normalize();
+      /* Fire along the controller's pointing ray. The entity itself follows
+         the grip, which on a Touch controller runs down the handle -- that is
+         why the barrel used to point at the floor. */
+      var dir = this.aimDir ? this.aimDir.clone()
+              : new THREE.Vector3(0, 0, -1)
+                  .applyQuaternion(this.el.object3D.getWorldQuaternion(new THREE.Quaternion()));
+      dir.normalize();
 
       if (this.weapon === 'rocket') { game.fireRocket(origin, dir, this.el); }
       else if (this.weapon === 'pistol') { game.firePistol(origin, dir, this.el); }
@@ -6458,6 +6564,29 @@
     /* --- weapons ------------------------------------------------------ */
 
     /* Nearest target whose bounding sphere the ray actually passes through. */
+    /* The walls are real. A round leaving the room has to go through a door
+       or a window; otherwise it stops at the plaster. */
+    wallBlocked: function (origin, p) {
+      if (!(this.el.is && this.el.is('ar-mode')) || !ROOM.ready || !ROOM.walls.length) { return false; }
+      if (insideRoom(p, 0.3)) { return false; }
+      var dir = new THREE.Vector3().subVectors(p, origin), dist = dir.length();
+      if (dist < 1e-3) { return false; }
+      dir.multiplyScalar(1 / dist);
+      var up = new THREE.Vector3(0, 1, 0), aps = apertures();
+      for (var i = 0; i < aps.length; i++) {
+        var a = aps[i], n = a.out || a.n;
+        var denom = dir.dot(n);
+        if (Math.abs(denom) < 1e-4) { continue; }
+        var t = new THREE.Vector3().subVectors(a.c, origin).dot(n) / denom;
+        if (t < 0 || t > dist) { continue; }
+        var hit = origin.clone().addScaledVector(dir, t).sub(a.c);
+        var horiz = new THREE.Vector3().crossVectors(up, n).normalize();
+        if (Math.abs(hit.dot(horiz)) <= (a.wide || 0.9) / 2 + 0.15 &&
+            Math.abs(hit.dot(up)) <= (a.tall || 0.9) / 2 + 0.15) { return false; }
+      }
+      return true;
+    },
+
     rayPick: function (origin, dir, maxDist) {
       var best = null, bestT = Infinity;
       var v = new THREE.Vector3();
@@ -6467,6 +6596,7 @@
         if (!c || !c.alive) { continue; }
         var p = new THREE.Vector3();
         el.object3D.getWorldPosition(p);
+        if (this.wallBlocked(origin, p)) { continue; }
         v.copy(p).sub(origin);
         var t = v.dot(dir);                       // distance along the ray
         if (t < 0 || t > maxDist) { continue; }
@@ -6591,14 +6721,19 @@
         to.normalize();
         // generous near the muzzle: the cone widens in angle as range shortens
         var need = coneCos - Math.min(0.02, c.radius / Math.max(d, 1) * 0.05);
-        if (to.dot(dir) >= need) { hits.push(el); }
+        if (to.dot(dir) >= need) {
+          if (this.wallBlocked(origin, el.object3D.getWorldPosition(new THREE.Vector3()))) { this._wallHit = true; continue; }
+          hits.push(el);
+        }
       }
 
       if (!hits.length) {
         sfx.miss();
-        this.say('Miss');
+        this.say(this._wallHit ? 'Wall' : 'Miss');
+        this._wallHit = false;
         return;
       }
+      this._wallHit = false;
       for (var j = 0; j < hits.length; j++) { this.destroy(hits[j], 'shotgun'); }
     },
 
@@ -6711,6 +6846,8 @@
         this.rumble(null, 0.3, 60);
         // wave changes are on the clock now, not the body count
         this.paint();
+      } else if (c.spec === TYPES.bird) {
+        this.say('Bird');                 // a bird is a wasted round, not a mistake
       } else {
         this.civilian++;
         this.penalise(c.points, c.spec === TYPES.airliner ? 'AIRLINER DOWN' : c.spec.friendly ? 'FRIENDLY FIRE' : 'CIVILIAN DOWN', 0.95);
@@ -7118,6 +7255,14 @@
            '<span class="advwarn">It sounds this certain whether or not it can see anything.</span>' +
            '</div><p class="advrule">' + ADVISOR.ruleHint(this) + '</p></div>';
 
+      h += '<div class="sensorrow"><span class="roelab">Sensor</span><div class="roevals">';
+      for (var rr = 0; rr < RADARS.length; rr++) {
+        h += '<button class="roev' + (RADARS[rr].key === RADAR.key ? ' hot' : '') +
+             '" data-radar="' + RADARS[rr].key + '" title="' + RADARS[rr].blurb.replace(/"/g, '&quot;') + '">' +
+             RADARS[rr].name + '</button>';
+      }
+      h += '</div><p class="lonote">' + RADAR.blurb + '</p></div>';
+
       h += '<div class="locols">';
 
       h += '<div class="locol"><h3>Feeds &amp; importance</h3><div class="lolist">';
@@ -7200,6 +7345,12 @@
         self.wireLoadout();
       }
 
+      host.querySelectorAll('[data-radar]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          setRadar(b.getAttribute('data-radar'));
+          repaint();
+        });
+      });
       host.querySelectorAll('[data-feed]').forEach(function (b) {
         b.addEventListener('click', function () {
           var k = b.getAttribute('data-feed');
@@ -7332,7 +7483,8 @@
        row, grip flies the wave. Same LOADOUT underneath as the desktop panel,
        so whichever surface you set it on, it is one setup. */
     loRows: function () {
-      var rows = [{ kind: 'advice', label: 'take the classifier\u2019s picks' }], i;
+      var rows = [{ kind: 'advice', label: 'take the classifier\u2019s picks' },
+                  { kind: 'sensor', label: 'sensor: ' + RADAR.name }], i;
       for (i = 0; i < FIELDS.length; i++) {
         if (LOADOUT.COSTED.indexOf(FIELDS[i].key) === -1) { continue; }
         rows.push({ kind: 'feed', key: FIELDS[i].key, label: FIELDS[i].name });
@@ -7386,6 +7538,13 @@
         this._restartArmed = false;
         this.loOn = false;
         this.restartRun();
+        return;
+      }
+      if (r.kind === 'sensor') {
+        var ri = 0;
+        for (var rj = 0; rj < RADARS.length; rj++) { if (RADARS[rj].key === RADAR.key) { ri = rj; } }
+        setRadar(RADARS[(ri + 1) % RADARS.length].key);
+        this.drawLoadoutPanel();
         return;
       }
       if (r.kind === 'advice') {
@@ -8049,7 +8208,7 @@
         AI_TRAIN.recompute();
       }
 
-      if (entry.ai !== null) {
+      if (entry.ai !== null && entry.type !== 'bird') {
         var believed = (action === 'engaged');
         var agreed = (believed === entry.ai);
         var aiRight = (entry.ai === entry.hostile);

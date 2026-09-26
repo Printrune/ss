@@ -140,5 +140,78 @@
       ],
       "status": "planned-export"
     }
+  ],
+  "sensors": [
+    {
+      "id": "mydefence-wingman-105",
+      "name": "MyDefence Wingman 105 (Wideband XF antenna)",
+      "kind": "passive-rf-detector",
+      "dataClass": "commercial-public",
+      "provenance": {
+        "sourceUrl": "https://mydefence.com/wearable-solutions/wingman-drone-detector/",
+        "secondaryUrl": "https://mydefence.com/wp-content/uploads/2025/08/Wingman_103-105_MyDefence_web.pdf",
+        "retrieved": "2026-09-26"
+      },
+      "spec": {
+        "method": "passive RF",
+        "bandsGHz": "0.2\u20136 (Wideband XF antenna); 2.4 / 5.2 / 5.8 base unit",
+        "detectionRangeKm": 6,
+        "rangeNote": "depending on RF environment and line of sight",
+        "coverage": "360\u00b0 with Wideband XF antenna; 90\u00b0\u00d790\u00b0 base",
+        "directionFindingAccuracyDeg": 30,
+        "detectionTimeS": "< 10",
+        "alerts": [
+          "sound",
+          "light",
+          "haptic"
+        ],
+        "detects": [
+          "drones",
+          "controllers"
+        ],
+        "classification": "drone library, remotely updated",
+        "weightG": 840,
+        "dimensionsMm": [
+          154,
+          90,
+          60
+        ],
+        "batteryH": 6,
+        "ip": "IP67",
+        "operatingTempC": [
+          -30,
+          65
+        ],
+        "atak": true
+      },
+      "notStated": [
+        "simultaneous tracks",
+        "library size",
+        "range readout",
+        "altitude",
+        "FPV analogue video detection"
+      ],
+      "training": {
+        "bind": {
+          "sensorKey": "wingman",
+          "gives": [
+            "direction \u00b130\u00b0",
+            "library match",
+            "alert < 10 s"
+          ],
+          "withholds": [
+            "range",
+            "size",
+            "speed"
+          ],
+          "blindTo": [
+            "birds",
+            "missiles",
+            "jets",
+            "non-transmitting UAS"
+          ]
+        }
+      }
+    }
   ]
 }
