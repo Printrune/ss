@@ -1,0 +1,144 @@
+{
+  "kind": "verse-catalogue",
+  "schemaVersion": "0.1",
+  "name": "Sentraspere Verse catalogue",
+  "generated": "2026-09-26",
+  "description": "A small, self-hosted marketplace of reusable UAS assets, behaviors, scenarios and datasets for virtual and constructive training. Instantiated by the competitor because a Government-furnished Army Verse Marketplace is not available during the prize period. Every asset carries its provenance; every value is either manufacturer-published or explicitly marked derived.",
+  "consumers": [
+    {
+      "id": "sentraspere-webxr",
+      "name": "Sentraspere (WebXR \u2014 VR and passthrough AR)",
+      "kind": "virtual",
+      "url": "../index.html"
+    },
+    {
+      "id": "sentraspere-constructive",
+      "name": "Sentraspere constructive runner (2D)",
+      "kind": "constructive",
+      "url": null,
+      "status": "planned"
+    }
+  ],
+  "assets": [
+    {
+      "id": "dji-avata-2",
+      "path": "assets/dji-avata-2.json",
+      "name": "DJI Avata 2",
+      "class": "multirotor-fpv",
+      "roles": [
+        "hostile-threat"
+      ],
+      "dataClass": "commercial-public"
+    },
+    {
+      "id": "dji-mini-4-pro",
+      "path": "assets/dji-mini-4-pro.json",
+      "name": "DJI Mini 4 Pro",
+      "class": "multirotor-consumer",
+      "roles": [
+        "civilian"
+      ],
+      "dataClass": "commercial-public"
+    },
+    {
+      "id": "wingtraone-gen-ii",
+      "path": "assets/wingtraone-gen-ii.json",
+      "name": "WingtraOne GEN II",
+      "class": "fixed-wing-vtol",
+      "roles": [
+        "friendly-isr",
+        "interceptor",
+        "strike"
+      ],
+      "dataClass": "commercial-public"
+    }
+  ],
+  "behaviors": [
+    {
+      "id": "home-weave",
+      "name": "Home on target with lateral weave",
+      "description": "Closes on the defended point along a curved approach, weaving across its own heading and drifting in altitude. Aims at an offset and only closes it near the end.",
+      "implementedIn": [
+        "sentraspere-webxr"
+      ]
+    },
+    {
+      "id": "cross-loiter",
+      "name": "Cross the area, loiter, depart",
+      "description": "Transits past the defended point at a lateral offset without closing on it. Civilian pattern.",
+      "implementedIn": [
+        "sentraspere-webxr"
+      ]
+    },
+    {
+      "id": "orbit-isr",
+      "name": "Orbit at standoff",
+      "description": "Holds a racetrack at altitude over the area of interest.",
+      "implementedIn": [],
+      "status": "planned"
+    },
+    {
+      "id": "intercept-pursuit",
+      "name": "Pursue and intercept a designated UAS",
+      "description": "Launches from the friendly platform, pursues a designated contact and engages it.",
+      "implementedIn": [],
+      "status": "planned"
+    },
+    {
+      "id": "strike-run",
+      "name": "Deliver munition on a designated surface target",
+      "description": "Ingress, release on a designated hostile surface target, egress.",
+      "implementedIn": [],
+      "status": "planned"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "hostile-uas-threat",
+      "path": "scenarios/hostile-uas-threat.json",
+      "name": "Hostile UAS threat \u2014 detect, classify, react",
+      "challengeRef": "III.2(c)",
+      "community": [
+        "Training",
+        "Analysis"
+      ],
+      "status": "implemented"
+    },
+    {
+      "id": "uas-intercept",
+      "path": null,
+      "name": "UAS intercepts hostile UAS",
+      "challengeRef": "III.2(b)",
+      "community": [
+        "Training"
+      ],
+      "status": "planned"
+    },
+    {
+      "id": "uas-strike",
+      "path": null,
+      "name": "UAS delivers munition on hostile surface target",
+      "challengeRef": "III.2(a)",
+      "community": [
+        "Training"
+      ],
+      "status": "planned"
+    }
+  ],
+  "datasets": [
+    {
+      "id": "trust-calibration-log",
+      "name": "Human\u2013AI trust calibration log",
+      "community": [
+        "Analysis",
+        "Test & Evaluation"
+      ],
+      "description": "Per-contact record: ground truth, operator's own rules verdict, classifier verdict and stated confidence, operator action, spoofed flag, wave, and the four calibration outcomes (trusted-right, trusted-wrong, overrode-right, overrode-wrong). Heart rate and stress when a strap is worn.",
+      "format": [
+        "json",
+        "csv"
+      ],
+      "status": "planned-export"
+    }
+  ]
+}

@@ -1273,6 +1273,11 @@
       noise: { g: 0.10, lp: 1100 }, gain: 0.50,
       ref: 5, max: 80, roll: 1.5, wobble: 17
     },
+    vtol: {   // twin electric motors in cruise, a steady hum
+      osc: [{ type: 'sawtooth', f: 74, g: 0.30 }, { type: 'triangle', f: 148, g: 0.12 }],
+      noise: { g: 0.06, lp: 900 }, gain: 0.34,
+      ref: 6, max: 90, roll: 1.4, wobble: 9
+    },
     quad: {   // lighter, higher, quieter: a sub-250 g hobby airframe
       osc: [{ type: 'sawtooth', f: 128, g: 0.26 }, { type: 'square', f: 256, g: 0.09 }],
       noise: { g: 0.07, lp: 1400 }, gain: 0.36,
@@ -1719,7 +1724,7 @@
     } catch (e) { /* private window: just use the query string */ }
     var at = q.get('at');
     if (at && /^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(at)) {
-      LIVE.at = at.split(',').map(Number);
+      LIVE.at = at.split(',').map(Number); LIVE.fixed = true;
     }
     if (q.get('nm')) { LIVE.nm = Math.min(500, Math.max(5, +q.get('nm') || 250)); }
     LIVE.on = q.get('air') !== '0';          // on by default now
@@ -1746,6 +1751,19 @@
       this.since = 1e9;                  // fetch on the first tick
       this.busy = false;
       if (!LIVE.on) { return; }
+      /* In passthrough the sky outside is YOUR sky, so ask where you are.
+         Once, on entering AR, unless ?at= already said. The ship keeps its
+         Puget Sound position. */
+      var self = this;
+      this.el.sceneEl.addEventListener('enter-vr', function () {
+        if (!self.el.sceneEl.is('ar-mode') || LIVE.located || LIVE.fixed) { return; }
+        if (!navigator.geolocation) { return; }
+        navigator.geolocation.getCurrentPosition(function (pos) {
+          LIVE.at = [+pos.coords.latitude.toFixed(4), +pos.coords.longitude.toFixed(4)];
+          LIVE.located = true; LIVE.note = 'located \u00b7 refreshing';
+          self.since = 1e9;                // pull again, from here
+        }, function () { LIVE.note = 'location refused \u00b7 using default'; }, { timeout: 8000, maximumAge: 600000 });
+      });
       // last good answer, kept so a dead network at the venue still shows
       // the traffic that was overhead when it was alive
       try {
@@ -1871,6 +1889,7 @@
         c.liveShape = sh;
         c.hostile = false;
         c.frozen = true;            // the feed moves it, not the game's autopilot
+        if (self.el.sceneEl.is('ar-mode')) { c.outdoor = true; c.setMasked(true); }
         self.fit(el, a);
       }, 0);
       return el;
@@ -2741,7 +2760,7 @@
      Head-relative scope: forward is always up, so a blip's bearing on the
      dial is the direction you actually turn. 50 m of coverage, which is
      past the 26–36 m spawn ring.                                        */
-  var RADAR_RANGE = 50;
+  var RADAR_RANGE = 100;
 
   AFRAME.registerComponent('radar', {
     init: function () {
@@ -2786,7 +2805,7 @@
       x.fillStyle = 'rgba(5,13,22,0.90)';
       x.beginPath(); x.arc(C, C, R, 0, 6.2832); x.fill();
 
-      // range rings, labelled at 25 m and the 50 m rim
+      // range rings: 20, 50, 80 and the 100 m rim
       x.lineWidth = 1.6;
       [0.2, 0.5, 0.8, 1].forEach(function (f) {
         x.strokeStyle = f === 1 ? 'rgba(56,182,240,0.60)' : 'rgba(94,119,147,0.38)';
@@ -2906,7 +2925,7 @@
       x.fillStyle = 'rgba(94,119,147,0.95)';
       x.font = '700 16px "Saira", system-ui, sans-serif';
       x.textAlign = 'center';
-      x.fillText('50m', C, 26);
+      x.fillText(RADAR_RANGE + 'm', C, 26);
 
       this.tex.needsUpdate = true;
     }
@@ -4191,12 +4210,12 @@
       };
 
       var q = game.queue || [];
-      var counts = { missile: 0, jet: 0, airliner: 0, bird: 0, drone: 0, quad: 0,
+      var counts = { missile: 0, jet: 0, airliner: 0, bird: 0, drone: 0, quad: 0, vtol: 0,
                      usv: 0, torpedo: 0, fishing: 0 };
       for (i = 0; i < q.length; i++) {
         counts[q[i].name] = (counts[q[i].name] || 0) + q[i].n;
       }
-      var civilians = counts.airliner + counts.bird + counts.quad + counts.fishing;
+      var civilians = counts.airliner + counts.bird + counts.quad + counts.vtol + counts.fishing;
       var armoured = counts.missile + counts.usv + counts.torpedo;
       var lastWave = game.wave - 1;
       var lost = 0, spoofed = 0;
@@ -4405,6 +4424,7 @@
   var SIGNATURE = {
     drone:    { profile: 'QUADROTOR', emissn: 'ELECTRIC',  xpdr: 'NONE' },
     quad:     { profile: 'QUADROTOR', emissn: 'ELECTRIC',  xpdr: 'RID' },     // Remote ID broadcast
+    vtol:     { profile: 'FIXED-WING', emissn: 'ELECTRIC', xpdr: 'FRIEND' },  // ours, and says so
     missile:  { profile: 'CRUISE',    emissn: 'ROCKET',    xpdr: 'NONE' },
     jet:      { profile: 'DELTA',     emissn: 'TURBOJET',  xpdr: 'MIL' },
     airliner: { profile: 'AIRLINER',  emissn: 'TURBOFAN',  xpdr: 'CIVIL' },
@@ -4517,18 +4537,35 @@
   /* The ring frames the contact and never writes over it: no numbers in the
      middle, and it scales with the aircraft so the airframe stays visible
      inside it. Everything readable lives in a panel above. */
+  /* Friend or foe, the way an interrogator actually answers: a contact that
+     replies with the friendly code, on a feed that has resolved, is green.
+     Everything else is red -- not 'hostile', UNKNOWN. A bird is red. An
+     airliner is red. The classification is still yours. */
+  function iffFriend(c, dist) {
+    /* A friendly reply is the one thing that is not range-gated: an
+       interrogator gets its answer at the scope's full reach, which is the
+       whole point of carrying the code. A lying transponder still lies. */
+    for (var i = 0; i < CUES.length; i++) {
+      if (CUES[i].key !== 'XPDR') { continue; }
+      if (dist > RADAR_RANGE) { return false; }
+      return cueValue('XPDR', c, i) === 'FRIEND';
+    }
+    return false;
+  }
+
   function drawIff(sprite, c, dist, pct) {
     var u = sprite.userData;
     var lit = 0, i;
     for (i = 0; i < CUES.length; i++) { if (dist <= cueAt(i, c)) { lit++; } }
     var conflict = conflictVisible(c, dist);
-    var stamp = lit + '|' + Math.round(pct / 5) + '|' + (conflict ? 'X' : '-');
+    var friend = iffFriend(c, dist);
+    var stamp = lit + '|' + Math.round(pct / 5) + '|' + (conflict ? 'X' : '-') + (friend ? 'F' : 'U');
     if (u.last === stamp) { return; }
     u.last = stamp;
 
     var x = u.ctx, C = 128, R = 96;
-    var rgb = iffRGB(pct);
-    var col = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
+    var t = Math.max(0.45, Math.min(1, pct / 100));
+    var col = friend ? 'rgba(95,217,139,' + t + ')' : 'rgba(255,77,61,' + t + ')';
     var band = trackBand(pct);
     x.clearRect(0, 0, 256, 256);
 
@@ -4987,6 +5024,47 @@
     s.userData = { cv: cv, ctx: cv.getContext('2d'), tex: tex, last: -1, inRange: null };
     return s;
   }
+  /* The real transponder record for a real aircraft: what ADS-B actually
+     broadcasts, laid out the way a controller would read it. Only for live
+     contacts, and only while the RF feed is switched on. */
+  function adsbSprite() { return spriteCanvas(640, 176); }
+
+  function drawAdsb(sprite, a, sh) {
+    var u = sprite.userData;
+    var stamp = [a.hex, a.call, a.altFt, Math.round(a.gs), a.squawk, a.dst.toFixed(1), Math.round(a.dir)].join('|');
+    if (u.last === stamp) { return; }
+    u.last = stamp;
+    var x = u.ctx;
+    x.clearRect(0, 0, 640, 176);
+    x.fillStyle = 'rgba(5,13,22,0.86)';
+    x.fillRect(0, 0, 640, 176);
+    x.fillStyle = a.mil ? '#FFB020' : '#5FD98B';
+    x.fillRect(0, 0, 7, 176);
+
+    x.textBaseline = 'middle';
+    x.textAlign = 'left';
+    x.font = '600 20px "IBM Plex Mono", ui-monospace, monospace';
+    x.fillStyle = '#5E7793';
+    x.fillText('ADS-B \u00b7 ' + (a.mil ? 'MIL' : 'CIVIL') + (a.src ? ' \u00b7 ' + String(a.src).toUpperCase() : ''), 24, 26);
+
+    x.font = '700 44px "Saira", system-ui, sans-serif';
+    x.fillStyle = '#EAF3FB';
+    var ident = a.call || a.reg || a.hex.toUpperCase();
+    x.fillText(ident, 24, 68);
+    x.font = '600 26px "IBM Plex Mono", ui-monospace, monospace';
+    x.fillStyle = '#CFE0F0';
+    x.textAlign = 'right';
+    x.fillText((a.type || sh.what) + (a.reg && a.reg !== ident ? '  ' + a.reg : ''), 616, 68);
+
+    x.textAlign = 'left';
+    x.font = '600 28px "IBM Plex Mono", ui-monospace, monospace';
+    x.fillStyle = '#9FB6CE';
+    var fl = a.altFt >= 18000 ? 'FL' + Math.round(a.altFt / 100) : Math.round(a.altFt).toLocaleString() + ' ft';
+    x.fillText(fl + '   ' + Math.round(a.gs) + ' kt' + (a.squawk ? '   sq ' + a.squawk : ''), 24, 112);
+    x.fillText(a.dst.toFixed(1) + ' nm   ' + ('00' + Math.round(a.dir)).slice(-3) + '\u00b0' + (a.track ? '   trk ' + ('00' + Math.round(a.track)).slice(-3) : ''), 24, 152);
+    u.tex.needsUpdate = true;
+  }
+
   function drawDist(sprite, metres, inRange) {
     var u = sprite.userData;
     if (u.last === metres && u.inRange === inRange) { return; }
@@ -5066,6 +5144,34 @@
     var led = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), lamp(0xEAF3FB));
     led.position.set(0, 0.07, -0.08); g.add(led);
     return { group: g, rotors: rotors, led: led, radius: 0.3 };
+  }
+
+  /* The friendly one: a white flying wing, twin motors, green all over
+     because it is squawking ours. Bound to the catalogued survey VTOL. */
+  function buildVtol() {
+    var g = new THREE.Group(), rotors = [];
+    var skin = mat(0xEAF3FB, { emissive: 0x6B8796, metalness: 0.2, roughness: 0.6 });
+    var dark = mat(0x2A3846, { emissive: 0x1A2430 });
+    var rotor = mat(0xCFDCE8, { emissive: 0x4A5A6C, transparent: true, opacity: 0.5 });
+    var wing = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.05, 0.42), skin);
+    g.add(wing);
+    var body = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.1, 0.62), skin);
+    body.position.z = 0.04; g.add(body);
+    var nose = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), dark);
+    nose.position.set(0, -0.02, 0.36); g.add(nose);
+    [-0.34, 0.34].forEach(function (sx) {
+      var pod = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.18, 8), dark);
+      pod.rotation.x = Math.PI / 2; pod.position.set(sx, 0.02, 0.22); g.add(pod);
+      var r = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.006, 12), rotor);
+      r.rotation.x = Math.PI / 2; r.position.set(sx, 0.02, 0.32); g.add(r); rotors.push(r);
+      var fin = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.14, 0.2), skin);
+      fin.position.set(sx * 1.8, 0.07, -0.08); g.add(fin);
+      var nav = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), lamp(FRIEND));
+      nav.position.set(sx * 1.8, 0, -0.1); g.add(nav);
+    });
+    var led = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), lamp(FRIEND));
+    led.position.set(0, 0.08, -0.2); g.add(led);
+    return { group: g, rotors: rotors, led: led, radius: 0.65 };
   }
 
   function buildMissile() {
@@ -5273,6 +5379,7 @@
        and sensor signature from the catalogued commercial UAS manifests. */
     drone:    { build: buildDrone,    hostile: true,  move: 'home',  speed: [1.4, 3.6],  points: 10,  alt: [12, 22],    hp: 3, label: 'FPV UAS' },
     quad:     { build: buildQuad,     hostile: false, move: 'cross', speed: [0.8, 2.1],  points: -40, alt: [10, 18],    hp: 1, label: 'Consumer UAS' },
+    vtol:     { build: buildVtol,     hostile: false, move: 'cross', speed: [1.6, 2.6],  points: -60, alt: [18, 28],    hp: 4, label: 'Friendly UAS', outdoor: true, friendly: true },
     missile:  { build: buildMissile,  hostile: true,  move: 'home',  speed: [4.5, 7.0],  points: 30,  alt: [13, 20],    hp: 1, pistolProof: true, label: 'Cruise missile' },
     jet:      { build: buildJet,      hostile: true,  move: 'cross', speed: [7.0, 10.0], points: 20,  alt: [17, 27],    hp: 4, label: 'Fast jet', outdoor: true },
     airliner: { build: buildAirliner, hostile: false, move: 'cross', speed: [5.0, 7.0],  points: -60, alt: [26, 36],    hp: 2, label: 'Airliner', outdoor: true },
@@ -5372,14 +5479,14 @@
       for (var k in w.mix) { if (TYPES[k] && w.mix[k] > 0) { tbl.push([k, w.mix[k]]); } }
       if (tbl.length) { return tbl; }
     }
-    if (wave <= 1) { return [['drone', 5], ['quad', 2], ['bird', 3], ['missile', 2]]; }
+    if (wave <= 1) { return [['drone', 5], ['quad', 2], ['vtol', 1], ['bird', 3], ['missile', 2]]; }
     if (wave === 2) {
-      return [['drone', 4], ['quad', 2], ['bird', 2], ['airliner', 3], ['jet', 2], ['missile', 4]];
+      return [['drone', 4], ['quad', 2], ['vtol', 2], ['bird', 2], ['airliner', 3], ['jet', 2], ['missile', 4]];
     }
     if (wave === 3) {
-      return [['drone', 3], ['quad', 2], ['bird', 2], ['airliner', 3], ['jet', 3], ['missile', 6]];
+      return [['drone', 3], ['quad', 2], ['vtol', 2], ['bird', 2], ['airliner', 3], ['jet', 3], ['missile', 6]];
     }
-    return [['drone', 3], ['quad', 3], ['bird', 2], ['airliner', 3], ['jet', 3], ['missile', 7]];
+    return [['drone', 3], ['quad', 3], ['vtol', 2], ['bird', 2], ['airliner', 3], ['jet', 3], ['missile', 7]];
   }
   // From wave 3 a missile contact can arrive as a salvo on the same bearing.
   function salvoSize(wave) {
@@ -5533,14 +5640,18 @@
     tick: function (time, dt) {
       if (!this.alive || !dt) { return; }
       /* Real aircraft are moved by the feed. Letting the autopilot fly them
-         would be the one thing that made them not real. */
-      if (this.frozen) { return; }
+         would be the one thing that made them not real -- so the steering is
+         skipped for them, but the readouts are not: they are the contacts
+         with the most to read. */
+      var frozen = !!this.frozen;
       var s = Math.min(dt, 60) / 1000;
       var o = this.el.object3D;
       var game = this.el.sceneEl.components.game;
       if (!game) { return; }
 
-      if (this.gate && this.outside) {
+      if (frozen) {
+        this.baseY = o.position.y;
+      } else if (this.gate && this.outside) {
         /* Straight for the opening, at its height, no weave: the wall is
            real and the way through it is the door. */
         var gc = this.gate.c;
@@ -5600,12 +5711,12 @@
       }
 
       this.phase += s * (this.data.type === 'bird' ? 9 : 2.6);
-      o.position.y = this.baseY + Math.sin(this.phase) * this.bob;
+      if (!frozen) { o.position.y = this.baseY + Math.sin(this.phase) * this.bob; }
 
       /* In the room, nothing is allowed to come out of the floor. The
          altitudes were written for a player standing on a tower 16 m up; on
          the real floor the same numbers put contacts underfoot. */
-      if (this.el.sceneEl.is('ar-mode') && !(this.gate && this.outside)) {
+      if (!frozen && this.el.sceneEl.is('ar-mode') && !(this.gate && this.outside)) {
         var minY = arFloor() + AR_CEILING_CLEAR;
         if (o.position.y < minY) { o.position.y = minY; this.baseY = minY; }
         /* Back out through a wall: seen only through the openings again, and
@@ -5621,7 +5732,9 @@
 
       if (this.built.rotors) {
         for (var i = 0; i < this.built.rotors.length; i++) {
-          this.built.rotors[i].rotation.y += this.spin * s * (i % 2 ? -1 : 1);
+          var rr = this.built.rotors[i];
+          if (rr.rotation.x) { rr.rotation.z += this.spin * s * (i % 2 ? -1 : 1); }
+          else { rr.rotation.y += this.spin * s * (i % 2 ? -1 : 1); }
         }
       }
       /* A hull floats whatever the steering wanted. The movement code aims at
@@ -5737,6 +5850,17 @@
         this.aiTag.visible = !!VIEW.on.ai;
         this.aiTag.material.opacity = this.ai ? 0.97 : 0;
 
+        // the real transponder record, for the aircraft that are real
+        if (this.live) {
+          if (!this.adsb) { this.adsb = adsbSprite(); this.adsb.renderOrder = 999; this.hud.add(this.adsb); }
+          this.adsb.visible = !!VIEW.on.xpdr;
+          if (this.adsb.visible) {
+            drawAdsb(this.adsb, this.live, this.liveShape || liveShape(this.live));
+            this.adsb.scale.set(uiSz * 2.0, uiSz * 0.55, 1);
+            this.adsb.position.set(0, -(anchor + uiSz * 0.30) - uiSz * 0.72, 0);
+          }
+        }
+
         if (this.engine) {
           // radial velocity from how fast the range is actually closing
           var vr = this.lastDist === null ? 0 : (dist - this.lastDist) / s;
@@ -5747,7 +5871,8 @@
         }
       }
 
-      // exit conditions
+      // exit conditions -- not for real aircraft, the feed decides when they go
+      if (frozen) { return; }
       var px = o.position.x - game.target.x, pz = o.position.z - game.target.z;
       var flat = Math.sqrt(px * px + pz * pz);
       if (this.move === 'home' && flat < 2.2) {
@@ -6549,7 +6674,7 @@
         this.paint();
       } else {
         this.civilian++;
-        this.penalise(c.points, c.spec === TYPES.airliner ? 'AIRLINER DOWN' : 'CIVILIAN DOWN', 0.95);
+        this.penalise(c.points, c.spec === TYPES.airliner ? 'AIRLINER DOWN' : c.spec.friendly ? 'FRIENDLY FIRE' : 'CIVILIAN DOWN', 0.95);
         sfx.klaxon();
       }
       this.drop(el);
@@ -7320,7 +7445,7 @@
     /* Its accuracy per type, laid out so you can see which kinds of contact
        it has actually been taught and which it is still guessing at. */
     accuracyChips: function () {
-      var order = ['drone', 'quad', 'missile', 'jet', 'usv', 'torpedo',
+      var order = ['drone', 'quad', 'vtol', 'missile', 'jet', 'usv', 'torpedo',
                    'airliner', 'bird', 'fishing'];
       var out = '';
       for (var i = 0; i < order.length; i++) {

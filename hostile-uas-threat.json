@@ -1,0 +1,89 @@
+{
+  "id": "hostile-uas-threat",
+  "kind": "scenario",
+  "schemaVersion": "0.1",
+  "name": "Hostile UAS threat \u2014 detect, classify, react",
+  "community": [
+    "Training",
+    "Analysis"
+  ],
+  "challengeRef": "III.2(c)",
+  "description": "A watch position is approached over sixty seconds per wave by a mixed sky: hostile FPV UAS, cruise missiles and jets, with consumer quadcopters, airliners and birds among them. The operator has every sensor feed on, a classifier's opinion beside each contact, and the shot. Scoring rewards calibration \u2014 catching the classifier when it is wrong \u2014 not kills.",
+  "waves": [
+    {
+      "wave": 1,
+      "seconds": 60,
+      "mix": {
+        "drone": 5,
+        "quad": 2,
+        "vtol": 1,
+        "bird": 3,
+        "missile": 2
+      }
+    },
+    {
+      "wave": 2,
+      "seconds": 60,
+      "mix": {
+        "drone": 4,
+        "quad": 2,
+        "vtol": 2,
+        "bird": 2,
+        "airliner": 3,
+        "jet": 2,
+        "missile": 4
+      }
+    },
+    {
+      "wave": 3,
+      "seconds": 60,
+      "mix": {
+        "drone": 3,
+        "quad": 2,
+        "vtol": 2,
+        "bird": 2,
+        "airliner": 3,
+        "jet": 3,
+        "missile": 6
+      },
+      "salvoes": true
+    },
+    {
+      "wave": 4,
+      "seconds": 60,
+      "mix": {
+        "drone": 3,
+        "quad": 3,
+        "vtol": 2,
+        "bird": 2,
+        "airliner": 3,
+        "jet": 3,
+        "missile": 7
+      },
+      "salvoes": true
+    },
+    {
+      "wave": 5,
+      "seconds": 60,
+      "mix": {
+        "drone": 3,
+        "quad": 3,
+        "vtol": 2,
+        "bird": 2,
+        "airliner": 3,
+        "jet": 3,
+        "missile": 7
+      },
+      "salvoes": true
+    }
+  ],
+  "assets": [
+    "dji-avata-2",
+    "dji-mini-4-pro",
+    "wingtraone-gen-ii"
+  ],
+  "outputs": [
+    "trust-calibration-log"
+  ],
+  "notes": "Type keys are Sentraspere contact types. `drone`, `quad` and `vtol` are bound to catalogued commercial UAS; the others are synthetic training abstractions. `vtol` is the friendly platform and squawks FRIEND."
+}

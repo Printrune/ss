@@ -1,0 +1,118 @@
+{
+  "id": "wingtraone-gen-ii",
+  "kind": "uas-asset",
+  "schemaVersion": "0.1",
+  "name": "WingtraOne GEN II",
+  "manufacturer": "Wingtra AG",
+  "class": "fixed-wing-vtol",
+  "roles": [
+    "friendly-isr",
+    "interceptor",
+    "strike"
+  ],
+  "provenance": {
+    "sourceUrl": "https://wingtra.com/mapping-drone-wingtraone/technical-specifications/",
+    "secondaryUrl": "https://wingtra.com/wp-content/uploads/Wingtra-Technical-Specifications.pdf",
+    "retrieved": "2026-09-26",
+    "dataClass": "commercial-public",
+    "licenceNote": "Manufacturer spec page and hosted PDF 'Technical Specifications, August 2024', \u00a9 Wingtra. Values quoted for interoperability.",
+    "notes": "Tailsitter VTOL survey aircraft, listed on the DIU Blue UAS list (wingtra.com/wingtraone-gen-ii-listed-by-us-diu-as-a-blue-suas/). Superseded by WingtraRAY but the official spec page is live. Wingspan, dimensions, battery, altitude and link range come from the PDF, not the HTML page. Used here as the friendly platform: the interceptor and strike roles are training abstractions, not manufacturer capabilities."
+  },
+  "spec": {
+    "physical": {
+      "takeoffWeightG": 4800,
+      "dimensionsFoldedMm": null,
+      "dimensionsUnfoldedMm": [
+        1250,
+        680,
+        120
+      ],
+      "wingspanMm": 1250,
+      "payloadCapacityG": 800,
+      "articulation": "tailsitter VTOL; interchangeable payload bay"
+    },
+    "performance": {
+      "maxHorizontalSpeedMps": null,
+      "cruiseSpeedMps": 16,
+      "speedModesMps": null,
+      "maxAscentSpeedMps": null,
+      "maxDescentSpeedMps": null,
+      "maxTakeoffAltitudeM": 2500,
+      "maxWindResistanceMps": 12,
+      "maxFlightTimeMin": 59,
+      "maxFlightDistanceKm": null,
+      "maxTransmissionKm": 10
+    },
+    "power": {
+      "batteryCapacityMah": null,
+      "batteryEnergyWh": "2 \u00d7 99",
+      "nominalVoltage": 14.4
+    },
+    "sensors": {
+      "camera": "interchangeable: RGB61, Sony a6100, oblique a6100, MicaSense RedEdge-P, LIDAR",
+      "obstacleSensing": null,
+      "gnss": "PPK GNSS \u2014 GPS L1/L2, GLONASS L1/L2, Galileo L1, BeiDou L1"
+    }
+  },
+  "derived": {
+    "motorCount": {
+      "value": 2,
+      "basis": "Twin-motor tailsitter layout evident from imagery; not stated in the spec."
+    },
+    "maxGustMps": {
+      "value": 18,
+      "basis": "PDF states max gusts 18 m/s alongside 12 m/s sustained."
+    },
+    "coverage": {
+      "value": "460 ha per flight at 120 m AGL, 60% side overlap",
+      "basis": "PDF-stated survey coverage; relevant to the ISR role."
+    },
+    "iff": {
+      "value": "FRIEND",
+      "basis": "Training abstraction: the friendly platform replies to interrogation with the friendly code. Not a manufacturer capability."
+    }
+  },
+  "signature": {
+    "profile": "FIXED-WING",
+    "emission": "ELECTRIC",
+    "transponder": "FRIEND",
+    "acoustic": "quiet electric cruise; loud in VTOL transition",
+    "visual": "white 1.25 m flying wing"
+  },
+  "vulnerability": {
+    "hitsToKill": {
+      "pistol": 4,
+      "shotgun": 1,
+      "rocket": 1
+    },
+    "notes": "4.8 kg composite airframe."
+  },
+  "rendering": {
+    "gltf": null,
+    "procedural": "vtol",
+    "colour": "#EAF3FB",
+    "lights": "none published"
+  },
+  "behaviors": [
+    "orbit-isr",
+    "intercept-pursuit",
+    "strike-run"
+  ],
+  "training": {
+    "arenaScale": 0.13,
+    "bind": {
+      "contactType": "vtol",
+      "hostile": false,
+      "speedMps": [
+        1.6,
+        2.6
+      ],
+      "altBandM": [
+        18,
+        28
+      ],
+      "points": -60,
+      "hp": 4
+    }
+  }
+}
