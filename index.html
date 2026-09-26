@@ -2116,6 +2116,10 @@
   function insideRoom(p, margin) {
     if (!ROOM.walls.length) { return true; }
     margin = margin || 0;
+    /* A scan with a wall missing would leave one side open forever, so
+       anything well beyond the room's extent is outside whatever the walls
+       say. */
+    if (ROOM.centre && Math.hypot(p.x - ROOM.centre.x, p.z - ROOM.centre.z) > ROOM.radius * 1.5 + 1.5) { return false; }
     for (var i = 0; i < ROOM.walls.length; i++) {
       var w = ROOM.walls[i], o = w.out || w.n;
       if ((p.x - w.c.x) * o.x + (p.z - w.c.z) * o.z > margin) { return false; }
@@ -2378,6 +2382,12 @@
       this.head('ROOM');
       this.row('scan', ROOM.note);
       this.row('surfaces', ROOM.planeCount + ' planes   ' + ROOM.walls.length + ' walls');
+      var enc = ROOM.walls.length >= 3 && [[1, 0], [-1, 0], [0, 1], [0, -1]].every(function (d) {
+        var far = new THREE.Vector3((ROOM.centre ? ROOM.centre.x : 0) + d[0] * 8, 1, (ROOM.centre ? ROOM.centre.z : 0) + d[1] * 8);
+        return !insideRoom(far, 0);
+      });
+      this.row('enclosed', ROOM.walls.length ? (enc ? 'yes' : 'NO \u2014 a wall is missing from the scan') : '\u2014',
+               enc ? '#9FE8B0' : '#FF8A6A');
       this.row('openings', ROOM.doors.length + ' doors   ' + ROOM.windows.length +
                            ' windows   ' + ROOM.breaches.length + ' breaches');
       var keys = Object.keys(ROOM.labels);
@@ -5796,12 +5806,15 @@
         if (through <= 0.15 || insideRoom(o.position, 0.2)) {
           this.outside = false;
           this.setHidden(false);
+          /* Indoors the sky-sized weave and approach offset would put it
+             straight into a wall, so it flies tight: a missile at the
+             player, a crosser to another opening. */
+          this.weaveA *= 0.2; this.aimOff *= 0.15; this.climb = 0;
           if (this.move !== 'home') {
-            // a crosser now crosses the room, passing near the player
-            var t0 = game.target, side = (Math.random() < 0.5 ? -1 : 1) * (1 + Math.random() * 2);
-            var d0 = new THREE.Vector3(t0.x - o.position.x, 0, t0.z - o.position.z).normalize();
-            var aim0 = new THREE.Vector3(t0.x - d0.z * side, 0, t0.z + d0.x * side);
-            this.setHeading(aim0.sub(new THREE.Vector3(o.position.x, 0, o.position.z)));
+            var aps0 = apertures(), exits = aps0.filter(function (q) { return q !== this.gate; }, this);
+            var ex = exits.length ? exits[Math.floor(Math.random() * exits.length)] : this.gate;
+            this.exit = ex;
+            this.setHeading(new THREE.Vector3(ex.c.x - o.position.x, 0, ex.c.z - o.position.z));
           }
         }
       } else if (this.move === 'home') {
@@ -5841,6 +5854,28 @@
 
       this.phase += s * (this.data.type === 'bird' ? 9 : 2.6);
       if (!frozen) { o.position.y = this.baseY + Math.sin(this.phase) * this.bob; }
+
+      /* Inside the room, the walls are walls. A contact that would step
+         through one is held on the inside face; the only way out is the way
+         it came in, or another opening. */
+      if (!frozen && this.gate && !this.outside && game.roomWalls && game.roomWalls() &&
+          this.lastPos && !insideRoom(o.position, 0) && !game.throughOpening(this.lastPos, o.position)) {
+        for (var wi = 0; wi < ROOM.walls.length; wi++) {
+          var W = ROOM.walls[wi], Wo = W.out || W.n;
+          var over = (o.position.x - W.c.x) * Wo.x + (o.position.z - W.c.z) * Wo.z + 0.2;
+          if (over > 0) { o.position.x -= Wo.x * over; o.position.z -= Wo.z * over; }
+        }
+        if (this.move !== 'home') {
+          // a crosser that met a wall turns for the nearest opening instead
+          var best = null, bd = 1e9, aps1 = apertures();
+          for (var ai = 0; ai < aps1.length; ai++) {
+            var dd = Math.hypot(aps1[ai].c.x - o.position.x, aps1[ai].c.z - o.position.z);
+            if (dd < bd) { bd = dd; best = aps1[ai]; }
+          }
+          if (best) { this.setHeading(new THREE.Vector3(best.c.x - o.position.x, 0, best.c.z - o.position.z)); }
+        }
+      }
+      if (!frozen) { this.lastPos = this.lastPos ? this.lastPos.copy(o.position) : o.position.clone(); }
 
       /* In the room, nothing is allowed to come out of the floor. The
          altitudes were written for a player standing on a tower 16 m up; on
@@ -6013,10 +6048,16 @@
       if (frozen) { return; }
       var px = o.position.x - game.target.x, pz = o.position.z - game.target.z;
       var flat = Math.sqrt(px * px + pz * pz);
+      this.age = (this.age || 0) + s;
+      var receding = this.lastFlat !== undefined && flat > this.lastFlat + 0.01;
+      this.lastFlat = flat;
       if (this.move === 'home' && flat < 2.2) {
         this.alive = false;
         game.reached(this.el);
-      } else if (flat > 130) {
+      } else if (flat > 110 || (this.move !== 'home' && receding && flat > 60 && this.age > 8) || this.age > 150) {
+        /* Gone: off the scope, or a crosser well past you and opening the
+           range, or simply in the air so long something has gone wrong. A
+           wave must never wait on a bird. */
         this.alive = false;
         game.departed(this.el);
       }
@@ -6580,25 +6621,32 @@
     /* Nearest target whose bounding sphere the ray actually passes through. */
     /* The walls are real. A round leaving the room has to go through a door
        or a window; otherwise it stops at the plaster. */
-    wallBlocked: function (origin, p) {
-      if (!(this.el.is && this.el.is('ar-mode')) || !ROOM.ready || !ROOM.walls.length) { return false; }
-      if (insideRoom(p, 0.3)) { return false; }
-      var dir = new THREE.Vector3().subVectors(p, origin), dist = dir.length();
-      if (dist < 1e-3) { return false; }
+    roomWalls: function () {
+      return !!(this.el.is && this.el.is('ar-mode')) && ROOM.ready && ROOM.walls.length > 0;
+    },
+    /* Does the segment from a to b pass through a door, window or breach? */
+    throughOpening: function (a0, b0) {
+      var dir = new THREE.Vector3().subVectors(b0, a0), dist = dir.length();
+      if (dist < 1e-3) { return true; }
       dir.multiplyScalar(1 / dist);
       var up = new THREE.Vector3(0, 1, 0), aps = apertures();
       for (var i = 0; i < aps.length; i++) {
         var a = aps[i], n = a.out || a.n;
         var denom = dir.dot(n);
         if (Math.abs(denom) < 1e-4) { continue; }
-        var t = new THREE.Vector3().subVectors(a.c, origin).dot(n) / denom;
+        var t = new THREE.Vector3().subVectors(a.c, a0).dot(n) / denom;
         if (t < 0 || t > dist) { continue; }
-        var hit = origin.clone().addScaledVector(dir, t).sub(a.c);
+        var hit = a0.clone().addScaledVector(dir, t).sub(a.c);
         var horiz = new THREE.Vector3().crossVectors(up, n).normalize();
         if (Math.abs(hit.dot(horiz)) <= (a.wide || 0.9) / 2 + 0.15 &&
-            Math.abs(hit.dot(up)) <= (a.tall || 0.9) / 2 + 0.15) { return false; }
+            Math.abs(hit.dot(up)) <= (a.tall || 0.9) / 2 + 0.15) { return true; }
       }
-      return true;
+      return false;
+    },
+    wallBlocked: function (origin, p) {
+      if (!this.roomWalls()) { return false; }
+      if (insideRoom(p, 0.3)) { return false; }
+      return !this.throughOpening(origin, p);
     },
 
     rayPick: function (origin, dir, maxDist) {
@@ -8002,7 +8050,7 @@
       var n = 0;
       for (var i = 0; i < this.live.length; i++) {
         var c = this.live[i].components.target;
-        if (!c || !c.live) { n++; }
+        if (c && c.alive && c.hostile && !c.live) { n++; }
       }
       return n;
     },
@@ -8373,8 +8421,20 @@
       for (var i = this.rocks.length - 1; i >= 0; i--) {
         var r = this.rocks[i];
         var step = r.vel.clone().multiplyScalar(s);
+        var was = r.obj.position.clone();
         r.obj.position.add(step);
         r.travelled += step.length();
+        /* Leaving the room anywhere but an opening: the rocket stops in the
+           wall. It does not detonate on the far side of it. */
+        if (this.roomWalls() && insideRoom(was, 0.05) && !insideRoom(r.obj.position, 0.05) &&
+            !this.throughOpening(was, r.obj.position)) {
+          this.el.object3D.remove(r.obj);
+          r.obj.traverse(function (o) { if (o.material) { o.material.dispose(); } });
+          this.rocks.splice(i, 1);
+          this.spark(was);
+          this.say('Wall');
+          continue;
+        }
         r.smoke += s;
         if (r.smoke > 0.045) { r.smoke = 0; this.puff(r.obj.position); }
 
