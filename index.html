@@ -2912,6 +2912,7 @@
         var c = el.components && el.components.target;
         if (!c || !c.alive) { continue; }
         if (!sensorSees(c)) { continue; }
+        if (RADAR.rf && c.live) { continue; }        // not an RF detection
         el.object3D.getWorldPosition(this.tPos);
         if (RADAR.rf) {
           /* A wedge, not a blip: bearing to within the datasheet's 30
@@ -2954,9 +2955,11 @@
 
         // friend or unknown, same rule as the bracket; brightness is track quality
         var tq = c.track === undefined ? 0 : c.track;
-        var fr = iffFriend(c, flat);
+        var cls2 = iffClass(c, flat);
         var tt = 0.55 + 0.45 * Math.max(0, Math.min(1, tq / 100));
-        var col = fr ? 'rgba(95,217,139,' + tt + ')' : 'rgba(255,77,61,' + tt + ')';
+        var col = cls2 === 'friend' ? 'rgba(95,217,139,' + tt + ')'
+                : cls2 === 'civil'  ? 'rgba(159,182,206,' + tt + ')'
+                : 'rgba(255,77,61,' + tt + ')';
         x.globalAlpha = edge ? 0.5 : 1;
 
         x.strokeStyle = col;
@@ -4170,15 +4173,24 @@
      transmits (the catalogued UAS do; ADS-B does) and the detector has had
      its few seconds. Once heard, the library match arrives whole: what it
      is, on what band. What never arrives is range, size or speed. */
+  /* The Wingman's library is drones and their controllers. An airliner's
+     transponder is a different receiver's business (the ADS-B feed), so real
+     aircraft are never an RF detection here -- and never red: they answer
+     with a civil squawk, which is the opposite of unknown. */
   function rfDetectable(c) {
-    return !!(c && (c.live || (c.spec && c.spec.rf)));
+    return !!(c && !c.live && c.spec && c.spec.rf);
   }
   function rfHeard(c) {
     if (!RADAR.rf) { return true; }
     if (!rfDetectable(c)) { return false; }
     return performance.now() >= (c.rfAt || 0);
   }
-  function sensorSees(c) { return RADAR.rf ? rfHeard(c) : true; }
+  function sensorSees(c) { if (c && c.live) { return true; } return RADAR.rf ? rfHeard(c) : true; }
+  /* friend / civil / unknown, for every colour in the game */
+  function iffClass(c, dist) {
+    if (c && c.live) { return c.live.mil ? 'unknown' : 'civil'; }
+    return iffFriend(c, dist) ? 'friend' : 'unknown';
+  }
   function sensorGivesRange() { return !RADAR.rf; }
 
   function cueAt(i, c) {
@@ -4666,14 +4678,16 @@
     var lit = 0, i;
     for (i = 0; i < CUES.length; i++) { if (dist <= cueAt(i, c)) { lit++; } }
     var conflict = conflictVisible(c, dist);
-    var friend = iffFriend(c, dist);
-    var stamp = lit + '|' + Math.round(pct / 5) + '|' + (conflict ? 'X' : '-') + (friend ? 'F' : 'U');
+    var cls = iffClass(c, dist);
+    var stamp = lit + '|' + Math.round(pct / 5) + '|' + (conflict ? 'X' : '-') + cls;
     if (u.last === stamp) { return; }
     u.last = stamp;
 
     var x = u.ctx, C = 128, R = 96;
     var t = Math.max(0.45, Math.min(1, pct / 100));
-    var col = friend ? 'rgba(95,217,139,' + t + ')' : 'rgba(255,77,61,' + t + ')';
+    var col = cls === 'friend' ? 'rgba(95,217,139,' + t + ')'
+            : cls === 'civil'  ? 'rgba(159,182,206,' + t + ')'
+            : 'rgba(255,77,61,' + t + ')';
     var band = trackBand(pct);
     x.clearRect(0, 0, 256, 256);
 
@@ -7939,7 +7953,7 @@
        but never so tight that the last one cannot be delivered before the
        clock runs out. */
     swarmGap: function () {
-      return Math.max(4, (this.WAVE_LEN * 0.80 - 5) / this.swarmCount());
+      return Math.max(6, 24 - this.wave * 2);
     },
 
     spawnSwarm: function () {
@@ -7990,6 +8004,21 @@
         var c = this.live[i].components.target;
         if (!c || !c.live) { n++; }
       }
+      return n;
+    },
+
+    /* Hostiles still to come or still in the air, for the readout. */
+    hostilesLeft: function () {
+      var n = 0, i;
+      for (i = 0; i < this.live.length; i++) {
+        var c = this.live[i].components.target;
+        if (c && c.alive && c.hostile && !c.live) { n++; }
+      }
+      for (i = 0; i < (this.queue || []).length; i++) {
+        var q = this.queue[i];
+        if (TYPES[q.name] && TYPES[q.name].hostile) { n += q.n; }
+      }
+      n += (this.swarmsLeft || 0) * this.swarmSize();
       return n;
     },
 
@@ -8382,12 +8411,13 @@
       this.elapsed += s;
       this.waveTime += s;
       if (this.swarmsLeft > 0 && this.waveTime >= this.nextSwarmAt) { this.spawnSwarm(); }
+      /* A wave is a fixed number of hostiles, not a minute on the clock. It
+         ends when every one of them is down, through, or gone -- and the next
+         does not start until the breath between them is taken or skipped. */
       if (this.waveCleared()) { this.say('SECTOR CLEAR'); this.nextWave(); }
-      else if (this.waveTime >= this.WAVE_LEN) { this.nextWave(); }
       if (this.elWave) {
-        var left = Math.max(0, Math.ceil(this.WAVE_LEN - this.waveTime));
-        this.elWave.textContent = this.wave + '/' + LAST_LEVEL + ' \u00b7 ' +
-          Math.floor(left / 60) + ':' + ('0' + (left % 60)).slice(-2);
+        var hl = this.hostilesLeft();
+        this.elWave.textContent = this.wave + '/' + LAST_LEVEL + ' \u00b7 ' + hl + ' hostile' + (hl === 1 ? '' : 's');
       }
       var cam = this.el.camera;
       if (cam) {
