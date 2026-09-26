@@ -2054,6 +2054,18 @@
                wide: Math.min(1.2, w.wide || 1), tall: 1, label: 'wall', m: w.m, fallback: true };
     });
   }
+  /* Inside the room means on the inner side of every wall. Convex rooms only,
+     which is nearly every room; margin lets a contact be half through a door
+     without flickering. */
+  function insideRoom(p, margin) {
+    if (!ROOM.walls.length) { return true; }
+    margin = margin || 0;
+    for (var i = 0; i < ROOM.walls.length; i++) {
+      var w = ROOM.walls[i], o = w.out || w.n;
+      if ((p.x - w.c.x) * o.x + (p.z - w.c.z) * o.z > margin) { return false; }
+    }
+    return true;
+  }
   function aperturesAreFallback() {
     return !!(ROOM.walls.length && !(ROOM.doors.length + ROOM.windows.length + ROOM.breaches.length));
   }
@@ -2124,11 +2136,35 @@
           var face = a.c.clone().add(a.out || a.n);
           m.lookAt(face);
           m.renderOrder = 7;
+          m.userData.frame = true;
           this.g.add(m);
+
+          /* The screen. An invisible pane that writes 1 into the stencil
+             buffer wherever the opening is; anything flagged as outside the
+             room only draws where the stencil is 1, so you see it through
+             the door and nowhere else. Plus a faint glass tint so the
+             opening reads as a display, not a hole. */
+          var mask = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+            colorWrite: false, depthWrite: false, depthTest: false,
+            stencilWrite: true, stencilRef: 1,
+            stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp,
+            stencilZFail: THREE.ReplaceStencilOp, stencilFail: THREE.ReplaceStencilOp,
+            side: THREE.DoubleSide }));
+          mask.position.copy(a.c); mask.lookAt(face);
+          mask.renderOrder = -50;
+          this.g.add(mask);
+          var glass = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+            color: 0x0A1725, transparent: true, opacity: 0.22, depthWrite: false,
+            side: THREE.DoubleSide, fog: false }));
+          glass.position.copy(a.c); glass.lookAt(face);
+          glass.renderOrder = -40;
+          this.g.add(glass);
         }
       }
       var k = 0.72 + 0.28 * Math.sin(time / 600);
-      for (var j = 0; j < this.g.children.length; j++) { this.g.children[j].material.opacity = k; }
+      for (var j = 0; j < this.g.children.length; j++) {
+        if (this.g.children[j].userData.frame) { this.g.children[j].material.opacity = k; }
+      }
     }
   });
 
@@ -5238,8 +5274,8 @@
     drone:    { build: buildDrone,    hostile: true,  move: 'home',  speed: [1.4, 3.6],  points: 10,  alt: [12, 22],    hp: 3, label: 'FPV UAS' },
     quad:     { build: buildQuad,     hostile: false, move: 'cross', speed: [0.8, 2.1],  points: -40, alt: [10, 18],    hp: 1, label: 'Consumer UAS' },
     missile:  { build: buildMissile,  hostile: true,  move: 'home',  speed: [4.5, 7.0],  points: 30,  alt: [13, 20],    hp: 1, pistolProof: true, label: 'Cruise missile' },
-    jet:      { build: buildJet,      hostile: true,  move: 'cross', speed: [7.0, 10.0], points: 20,  alt: [17, 27],    hp: 4, label: 'Fast jet' },
-    airliner: { build: buildAirliner, hostile: false, move: 'cross', speed: [5.0, 7.0],  points: -60, alt: [26, 36],    hp: 2, label: 'Airliner' },
+    jet:      { build: buildJet,      hostile: true,  move: 'cross', speed: [7.0, 10.0], points: 20,  alt: [17, 27],    hp: 4, label: 'Fast jet', outdoor: true },
+    airliner: { build: buildAirliner, hostile: false, move: 'cross', speed: [5.0, 7.0],  points: -60, alt: [26, 36],    hp: 2, label: 'Airliner', outdoor: true },
     bird:     { build: buildBird,     hostile: false, move: 'cross', speed: [2.6, 4.2],  points: -25, alt: [13, 21],    hp: 1, label: 'Bird' },
 
     /* On the water. rocketOnly means a hull shrugs off small arms: the
@@ -5426,7 +5462,7 @@
       this.spin = 24 + Math.random() * 10;
       this.baseY = this.el.object3D.position.y;
 
-      this.gate = null; this.outside = false;
+      this.gate = null; this.outside = false; this.masked = false; this.outdoor = false; this.warned = false;
       this.hp = spec.hp || 1;
       this.maxHp = this.hp;
       this.pistolProof = !!spec.pistolProof;
@@ -5441,10 +5477,31 @@
     remove: function () {
       if (this.engine) { this.engine.stop(); this.engine = null; }
     },
-    /* Beyond the real wall: tracked on the scope, not drawn in the room. */
+    /* Beyond the real wall: drawn only through the openings (stencil), so a
+       door is a screen onto the outside. Hidden outright when there is no
+       opening to see through. */
     setHidden: function (h) {
-      if (this.built && this.built.group) { this.built.group.visible = !h; }
-      if (this.hud) { this.hud.visible = !h; }
+      var hasScreen = (ROOM.doors.length + ROOM.windows.length + ROOM.breaches.length) > 0 || aperturesAreFallback();
+      var show = !h || hasScreen;
+      if (this.built && this.built.group) { this.built.group.visible = show; }
+      if (this.hud) { this.hud.visible = show; }
+      this.setMasked(!!h && hasScreen);
+    },
+    setMasked: function (on) {
+      if (this.masked === on) { return; }
+      this.masked = on;
+      var apply = function (o) {
+        var mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+        for (var i = 0; i < mats.length; i++) {
+          mats[i].stencilWrite = on;
+          mats[i].stencilRef = 1;
+          mats[i].stencilFunc = on ? THREE.EqualStencilFunc : THREE.AlwaysStencilFunc;
+          mats[i].stencilFail = THREE.KeepStencilOp; mats[i].stencilZFail = THREE.KeepStencilOp; mats[i].stencilZPass = THREE.KeepStencilOp;
+          mats[i].needsUpdate = true;
+        }
+      };
+      if (this.built && this.built.group) { this.built.group.traverse(apply); }
+      if (this.hud) { this.hud.traverse(apply); }
     },
     onShot: function () {
       // desktop mouse path; shift-click sends a rocket instead
@@ -5496,7 +5553,7 @@
         o.rotation.y = Math.atan2(gx, gz);
         var gout = this.gate.out || this.gate.n;
         var through = (o.position.x - gc.x) * gout.x + (o.position.z - gc.z) * gout.z;
-        if (through <= 0.15) {
+        if (through <= 0.15 || insideRoom(o.position, 0.2)) {
           this.outside = false;
           this.setHidden(false);
           if (this.move !== 'home') {
@@ -5551,12 +5608,16 @@
       if (this.el.sceneEl.is('ar-mode') && !(this.gate && this.outside)) {
         var minY = arFloor() + AR_CEILING_CLEAR;
         if (o.position.y < minY) { o.position.y = minY; this.baseY = minY; }
-        /* Back out through a wall: gone from the room, gone from view. */
-        if (this.gate && ROOM.centre && !this.outside) {
-          var rc = Math.hypot(o.position.x - ROOM.centre.x, o.position.z - ROOM.centre.z);
-          if (rc > ROOM.radius + 0.6) { this.setHidden(true); if (rc > ROOM.radius + 5) { this.alive = false; game.departed(this.el); return; } }
+        /* Back out through a wall: seen only through the openings again, and
+           gone for good once it is well clear of the room. */
+        if (this.gate && !this.outside && !insideRoom(o.position, 0.6)) {
+          this.setHidden(true);
+          if (!insideRoom(o.position, 6)) { this.alive = false; game.departed(this.el); return; }
         }
       }
+      /* Outdoor-only traffic in the room: never crosses a wall, always seen
+         through the glass. */
+      if (this.outdoor) { this.setMasked(true); }
 
       if (this.built.rotors) {
         for (var i = 0; i < this.built.rotors.length; i++) {
@@ -5662,6 +5723,14 @@
           if (this.ai) { this.ai.spoofed = this.conflict; this.ai.bucket = bucket; }
         }
         if (tier < 0) { this.ai = null; }
+        /* First time the classifier calls an inbound contact hostile, say so:
+           which opening, how far, how sure it is. Once per contact. */
+        if (this.ai && this.ai.hostile && !this.warned && this.gate && this.el.sceneEl.is('ar-mode')) {
+          this.warned = true;
+          var gl = this.gate.label === 'breach' ? 'BREACH' : isDoor(this.gate.label) ? 'DOOR' : isWindow(this.gate.label) ? 'WINDOW' : 'WALL';
+          game.say('AI: HOSTILE ' + this.ai.stated + '% \u00b7 ' + gl + ' \u00b7 ' + Math.round(dist) + ' m');
+          sfx.ping();
+        }
         drawAI(this.aiTag, this.ai, this.delegated);
         this.aiTag.scale.set(uiSz * 1.45, uiSz * 0.656, 1);
         this.aiTag.position.set(anchor + uiSz * 0.78, uiSz * 0.2, 0);
@@ -7663,7 +7732,16 @@
          something. A door, a window, or a hole one of its own made earlier.
          It starts just outside the opening so it is heard and tracked before
          it is seen, which is the whole point: the scope knows before you do. */
-      var ap = this.enterPoint();
+      var inRoom = this.el.is && this.el.is('ar-mode') && ROOM.ready && ROOM.indoor;
+      var outdoor = inRoom && !!spec.outdoor;
+      var ap = outdoor ? null : this.enterPoint();
+      if (outdoor) {
+        /* Airliners and jets do not come through your door. They pass
+           outside, lower than over the ship so a window actually frames them. */
+        var far = Math.max(ROOM.radius + 8, 14) + Math.random() * 12;
+        pos = { x: (ROOM.centre ? ROOM.centre.x : 0) + Math.cos(a) * far, y: 5 + Math.random() * 9,
+                z: (ROOM.centre ? ROOM.centre.z : 0) + Math.sin(a) * far };
+      }
       if (ap) {
         /* Start well outside, so the scope has it long before the doorway
            does. It is hidden until it actually crosses the opening: in
@@ -7687,10 +7765,19 @@
       this.el.appendChild(el);
       this.live.push(el);
 
-      if (ap) {
+      if (ap || outdoor) {
+        var me = this, gateLabel = ap ? (ap.label === 'breach' ? 'BREACH' : isDoor(ap.label) ? 'DOOR' : isWindow(ap.label) ? 'WINDOW' : 'WALL') : null;
         setTimeout(function () {
           var t = el.components && el.components.target;
-          if (t) { t.gate = ap; t.outside = true; t.setHidden(true); }
+          if (!t) { return; }
+          if (ap) {
+            t.gate = ap; t.outside = true; t.setHidden(true);
+            var d0 = Math.round(Math.hypot(pos.x - me.target.x, pos.z - me.target.z));
+            me.say('INBOUND \u00b7 ' + gateLabel + ' \u00b7 ' + d0 + ' m');
+            sfx.ping();
+          } else {
+            t.outdoor = true; t.setMasked(true);
+          }
         }, 0);
       }
 
@@ -7722,6 +7809,7 @@
                    : name === 'airliner' ? [8, 26]
                    : name === 'fishing' ? [9, 24]      // trawlers keep their distance
                    : [5, 18];
+          if (outdoor) { var clear = ROOM.radius + 3; band = [Math.max(band[0], clear), Math.max(band[1], clear + 8)]; }
           var off = (Math.random() < 0.5 ? -1 : 1) * (band[0] + Math.random() * (band[1] - band[0]));
           var perp = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)).multiplyScalar(off);
           var aim = new THREE.Vector3(self.target.x, y, self.target.z).add(perp);
