@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sentraspere Verse catalogue</title>
+<style>
+  :root {
+    --void:#03080E; --deep:#0A1725; --horizon:#123049; --steel:#5E7793;
+    --ice:#CFE0F0; --chrome:#EAF3FB; --cyan:#38B6F0; --cyan-d:#1B7CB4;
+    --amber:#FFB020; --alarm:#FF4D3D; --friend:#5FD98B;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; background:var(--void); color:var(--ice);
+    font-family:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size:14px; line-height:1.45; }
+  a { color:var(--cyan); }
+  header { padding:28px 24px 18px; border-bottom:1px solid var(--horizon); display:flex; flex-wrap:wrap; gap:16px 32px; align-items:flex-end; }
+  header h1 { margin:0; font-size:22px; letter-spacing:.06em; color:var(--chrome); font-weight:600; }
+  header h1 small { display:block; font-size:11px; letter-spacing:.18em; color:var(--steel); font-weight:400; margin-bottom:6px; }
+  header p { margin:0; max-width:64ch; color:var(--steel); font-size:12.5px; }
+  .stats { display:flex; gap:22px; margin-left:auto; }
+  .stat b { display:block; font-size:22px; color:var(--cyan); font-weight:600; }
+  .stat span { font-size:10.5px; letter-spacing:.14em; color:var(--steel); text-transform:uppercase; }
+  main { display:grid; grid-template-columns: minmax(280px, 380px) 1fr; min-height: calc(100vh - 110px); }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } #detail { border-left:0; border-top:1px solid var(--horizon); } }
+  aside { border-right:1px solid var(--horizon); padding:18px 16px; }
+  .tools { display:flex; gap:8px; margin-bottom:14px; }
+  input, select { background:var(--deep); color:var(--ice); border:1px solid var(--horizon); padding:8px 10px; font:inherit; font-size:12.5px; border-radius:4px; }
+  input { flex:1; }
+  .section { margin:18px 0 6px; font-size:10.5px; letter-spacing:.18em; color:var(--steel); text-transform:uppercase; }
+  .card { display:block; width:100%; text-align:left; background:var(--deep); border:1px solid var(--horizon); border-radius:6px; padding:10px 12px; margin-bottom:8px; color:var(--ice); font:inherit; cursor:pointer; }
+  .card:hover, .card.on { border-color:var(--cyan-d); background:#0D1E31; }
+  .card.on { box-shadow: inset 3px 0 0 var(--cyan); }
+  .card .n { color:var(--chrome); font-weight:600; }
+  .card .m { color:var(--steel); font-size:11.5px; margin-top:2px; }
+  .tag { display:inline-block; font-size:10px; letter-spacing:.1em; text-transform:uppercase; padding:2px 7px; border-radius:3px; margin:6px 4px 0 0; border:1px solid var(--horizon); color:var(--steel); }
+  .tag.hostile-threat { border-color:var(--alarm); color:var(--alarm); }
+  .tag.civilian { border-color:var(--friend); color:var(--friend); }
+  .tag.friendly-isr, .tag.interceptor, .tag.strike { border-color:var(--cyan-d); color:var(--cyan); }
+  .tag.planned { border-style:dashed; }
+  .tag.implemented { border-color:var(--friend); color:var(--friend); }
+  #detail { padding:22px 26px 40px; overflow:auto; }
+  #detail h2 { margin:0 0 2px; font-size:24px; color:var(--chrome); font-weight:600; }
+  #detail .sub { color:var(--steel); margin-bottom:14px; }
+  .prov { background:var(--deep); border:1px solid var(--horizon); border-left:3px solid var(--cyan); padding:10px 14px; border-radius:4px; margin:14px 0 20px; font-size:12.5px; }
+  .prov b { color:var(--cyan); letter-spacing:.12em; font-size:10.5px; text-transform:uppercase; display:block; margin-bottom:4px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:18px 28px; }
+  h3 { margin:16px 0 6px; font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--steel); font-weight:600; }
+  h3.derived { color:var(--amber); }
+  h3.training { color:var(--friend); }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  td { padding:5px 0; border-bottom:1px solid #0E1F31; vertical-align:top; }
+  td:first-child { color:var(--steel); width:52%; padding-right:10px; }
+  td.null { color:#3C4E62; font-style:italic; }
+  td .basis { display:block; color:var(--steel); font-size:11px; margin-top:2px; }
+  .note { color:var(--steel); font-size:12px; margin:8px 0 0; }
+  .actions { margin-top:22px; display:flex; gap:10px; flex-wrap:wrap; }
+  .btn { display:inline-block; padding:8px 14px; border:1px solid var(--cyan-d); color:var(--cyan); border-radius:4px; text-decoration:none; font-size:12.5px; }
+  .btn:hover { background:#0D1E31; }
+  .empty { color:var(--steel); padding:40px 0; }
+  .list td:first-child { width:38%; }
+  footer { padding:16px 24px; border-top:1px solid var(--horizon); color:var(--steel); font-size:11.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><small>SENTRASPERE · VERSE CATALOGUE</small>Reusable UAS assets, behaviors, scenarios and datasets</h1>
+  <p id="lede">Loading catalogue…</p>
+  <div class="stats" id="stats"></div>
+</header>
+<main>
+  <aside>
+    <div class="tools">
+      <input id="q" type="search" placeholder="search name, class, role…" aria-label="Search">
+      <select id="role" aria-label="Filter by role">
+        <option value="">all roles</option>
+        <option value="hostile-threat">hostile threat</option>
+        <option value="civilian">civilian</option>
+        <option value="friendly-isr">friendly ISR</option>
+        <option value="interceptor">interceptor</option>
+        <option value="strike">strike</option>
+      </select>
+    </div>
+    <div id="lists"></div>
+  </aside>
+  <section id="detail"><div class="empty">Select an entry.</div></section>
+</main>
+<footer>
+  All values are manufacturer-published (with source) or explicitly marked derived. Commercial-public and synthetic data only — no Government-furnished information, no export-controlled data.
+  Schema: <a href="schema/uas-asset.schema.json">uas-asset.schema.json</a> · Index: <a href="catalogue.json">catalogue.json</a>
+</footer>
+<script>
+(function () {
+  'use strict';
+  var CAT = null, ASSETS = {}, current = null;
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+
+  fetch('catalogue.json').then(function (r) { return r.json(); }).then(function (c) {
+    CAT = c;
+    $('lede').textContent = c.description;
+    $('stats').innerHTML =
+      stat(c.assets.length, 'assets') + stat(c.behaviors.length, 'behaviors') +
+      stat(c.scenarios.length, 'scenarios') + stat(c.datasets.length, 'datasets');
+    return Promise.all(c.assets.map(function (a) {
+      return fetch(a.path).then(function (r) { return r.json(); }).then(function (m) { ASSETS[a.id] = m; });
+    }));
+  }).then(function () {
+    render();
+    var h = location.hash.replace('#', '');
+    if (h) { show(h); } else if (CAT.assets[0]) { show('asset:' + CAT.assets[0].id); }
+  }).catch(function (e) {
+    $('lede').textContent = 'Could not load catalogue.json — ' + e.message;
+  });
+
+  function stat(n, l) { return '<div class="stat"><b>' + n + '</b><span>' + l + '</span></div>'; }
+
+  $('q').addEventListener('input', render);
+  $('role').addEventListener('change', render);
+
+  function render() {
+    var q = $('q').value.trim().toLowerCase(), role = $('role').value;
+    var html = '';
+    html += '<div class="section">Assets</div>';
+    CAT.assets.forEach(function (a) {
+      var m = ASSETS[a.id] || a;
+      var hay = (a.name + ' ' + a.class + ' ' + (a.roles || []).join(' ') + ' ' + (m.manufacturer || '')).toLowerCase();
+      if (q && hay.indexOf(q) < 0) { return; }
+      if (role && (a.roles || []).indexOf(role) < 0) { return; }
+      html += card('asset:' + a.id, a.name, (m.manufacturer || '') + ' · ' + a.class, a.roles);
+    });
+    if (!role) {
+      html += '<div class="section">Behaviors</div>';
+      CAT.behaviors.forEach(function (b) {
+        if (q && (b.name + ' ' + b.description).toLowerCase().indexOf(q) < 0) { return; }
+        html += card('behavior:' + b.id, b.name, b.implementedIn.length ? 'implemented in ' + b.implementedIn.join(', ') : 'planned', [b.status || 'implemented']);
+      });
+      html += '<div class="section">Scenarios</div>';
+      CAT.scenarios.forEach(function (s) {
+        if (q && (s.name + ' ' + s.challengeRef).toLowerCase().indexOf(q) < 0) { return; }
+        html += card('scenario:' + s.id, s.name, 'Challenge ' + s.challengeRef + ' · ' + s.community.join(', '), [s.status]);
+      });
+      html += '<div class="section">Datasets</div>';
+      CAT.datasets.forEach(function (d) {
+        if (q && (d.name + ' ' + d.description).toLowerCase().indexOf(q) < 0) { return; }
+        html += card('dataset:' + d.id, d.name, d.community.join(', '), [d.status]);
+      });
+    }
+    $('lists').innerHTML = html;
+    [].forEach.call(document.querySelectorAll('.card'), function (b) {
+      b.addEventListener('click', function () { show(b.getAttribute('data-k')); });
+    });
+    mark();
+  }
+
+  function card(k, n, m, tags) {
+    return '<button class="card" data-k="' + esc(k) + '"><div class="n">' + esc(n) + '</div><div class="m">' + esc(m) + '</div>' +
+      (tags || []).map(function (t) { return '<span class="tag ' + esc(t) + '">' + esc(t.replace(/-/g, ' ')) + '</span>'; }).join('') + '</button>';
+  }
+
+  function mark() {
+    [].forEach.call(document.querySelectorAll('.card'), function (b) {
+      b.classList.toggle('on', b.getAttribute('data-k') === current);
+    });
+  }
+
+  function show(k) {
+    current = k; location.hash = k; mark();
+    var kind = k.split(':')[0], id = k.split(':')[1];
+    if (kind === 'asset') { return showAsset(ASSETS[id], CAT.assets.filter(function (a) { return a.id === id; })[0]); }
+    var list = CAT[kind + 's'] || [];
+    var e = list.filter(function (x) { return x.id === id; })[0];
+    if (!e) { return; }
+    var rows = Object.keys(e).filter(function (f) { return f !== 'id' && f !== 'name' && f !== 'path'; }).map(function (f) {
+      var v = e[f]; return row(f, Array.isArray(v) ? v.join(', ') : v);
+    }).join('');
+    $('detail').innerHTML = '<h2>' + esc(e.name) + '</h2><div class="sub">' + kind + ' · ' + esc(e.id) + '</div>' +
+      '<table class="list">' + rows + '</table>' +
+      (e.path ? '<div class="actions"><a class="btn" href="' + esc(e.path) + '">Open JSON</a></div>' : '');
+  }
+
+  function row(k, v, basis) {
+    var label = k.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/Mps\b/, ' m/s').replace(/Mm\b/, ' mm').replace(/ G\b| G$/, ' g').replace(/ M\b/, ' m').replace(/ Km\b/, ' km').replace(/ Min\b/, ' min').replace(/ Mah\b/, ' mAh').replace(/ Wh\b/, ' Wh').toLowerCase();
+    if (v === null || v === undefined) { return '<tr><td>' + esc(label) + '</td><td class="null">not published</td></tr>'; }
+    if (typeof v === 'object' && !Array.isArray(v)) {
+      v = Object.keys(v).map(function (kk) { return kk + ' ' + v[kk]; }).join(' · ');
+    }
+    if (Array.isArray(v)) { v = v.join(' × '); }
+    return '<tr><td>' + esc(label) + '</td><td>' + esc(v) + (basis ? '<span class="basis">' + esc(basis) + '</span>' : '') + '</td></tr>';
+  }
+
+  function block(title, obj, cls) {
+    if (!obj) { return ''; }
+    var rows = Object.keys(obj).map(function (k) { return row(k, obj[k]); }).join('');
+    return '<div><h3 class="' + (cls || '') + '">' + esc(title) + '</h3><table>' + rows + '</table></div>';
+  }
+
+  function showAsset(m, meta) {
+    if (!m) { $('detail').innerHTML = '<div class="empty">Manifest not loaded.</div>'; return; }
+    var p = m.provenance, d = m.derived || {}, t = m.training || {}, b = t.bind || {};
+    var derivedRows = Object.keys(d).map(function (k) { return row(k, d[k].value, 'basis: ' + d[k].basis); }).join('');
+    var bindRows = Object.keys(b).map(function (k) { return row(k, b[k]); }).join('');
+    $('detail').innerHTML =
+      '<h2>' + esc(m.name) + '</h2>' +
+      '<div class="sub">' + esc(m.manufacturer) + ' · ' + esc(m.class) + ' · ' +
+        (m.roles || []).map(function (r) { return '<span class="tag ' + esc(r) + '">' + esc(r.replace(/-/g, ' ')) + '</span>'; }).join('') + '</div>' +
+      '<div class="prov"><b>Provenance · ' + esc(p.dataClass) + ' · retrieved ' + esc(p.retrieved) + '</b>' +
+        '<a href="' + esc(p.sourceUrl) + '" target="_blank" rel="noopener">' + esc(p.sourceUrl) + '</a>' +
+        (p.secondaryUrl ? '<br><a href="' + esc(p.secondaryUrl) + '" target="_blank" rel="noopener">' + esc(p.secondaryUrl) + '</a>' : '') +
+        (p.licenceNote ? '<div class="note">' + esc(p.licenceNote) + '</div>' : '') +
+        (p.notes ? '<div class="note">' + esc(p.notes) + '</div>' : '') + '</div>' +
+      '<div class="grid">' +
+        block('Physical — manufacturer published', m.spec.physical) +
+        block('Performance — manufacturer published', m.spec.performance) +
+        block('Power', m.spec.power) +
+        block('Sensors', m.spec.sensors) +
+        '<div><h3 class="derived">Derived — not published, inferred</h3><table>' + derivedRows + '</table></div>' +
+        block('Signature — what a consuming sensor reports', m.signature) +
+        block('Vulnerability — hits to kill by weapon class', m.vulnerability && m.vulnerability.hitsToKill) +
+        block('Rendering', m.rendering) +
+        '<div><h3 class="training">Training binding — Sentraspere arena, scale ' + esc(t.arenaScale) + '</h3><table>' + bindRows + '</table>' +
+          '<p class="note">Arena speeds are spec speeds × ' + esc(t.arenaScale) + ' so a 60 m training volume plays at human reaction time. The spec values above are untouched.</p></div>' +
+      '</div>' +
+      '<div class="actions"><a class="btn" href="' + esc(meta.path) + '">Download manifest JSON</a>' +
+        '<a class="btn" href="schema/uas-asset.schema.json">Schema</a>' +
+        '<a class="btn" href="../index.html">Open in Sentraspere</a></div>';
+  }
+}());
+</script>
+</body>
+</html>

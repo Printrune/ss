@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://printrune.github.io/ss/catalogue/schema/uas-asset.schema.json",
+  "title": "Sentraspere Verse catalogue — UAS asset manifest",
+  "description": "One reusable UAS platform representation. `spec` holds only values published by the manufacturer, each with its source. `derived` holds values inferred from the product but not published, and says so. `training` is how a consuming environment binds the asset into an arena; it never overrides `spec`.",
+  "type": "object",
+  "required": ["id", "kind", "name", "manufacturer", "class", "provenance", "spec", "training"],
+  "properties": {
+    "id":           { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "kind":         { "const": "uas-asset" },
+    "schemaVersion":{ "type": "string" },
+    "name":         { "type": "string" },
+    "manufacturer": { "type": "string" },
+    "class":        { "type": "string", "enum": ["multirotor-consumer", "multirotor-fpv", "fixed-wing-vtol", "fixed-wing", "helicopter", "hybrid"] },
+    "roles":        { "type": "array", "items": { "type": "string", "enum": ["hostile-threat", "civilian", "friendly-isr", "interceptor", "strike"] } },
+    "provenance": {
+      "type": "object",
+      "required": ["sourceUrl", "retrieved", "dataClass"],
+      "properties": {
+        "sourceUrl":    { "type": "string", "format": "uri" },
+        "secondaryUrl": { "type": "string", "format": "uri" },
+        "retrieved":    { "type": "string", "format": "date" },
+        "dataClass":    { "type": "string", "enum": ["commercial-public", "open-source", "synthetic"] },
+        "licenceNote":  { "type": "string" },
+        "notes":        { "type": "string" }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "description": "Manufacturer-published values only. null = not published.",
+      "properties": {
+        "physical": {
+          "type": "object",
+          "properties": {
+            "takeoffWeightG":       { "type": ["number", "null"] },
+            "dimensionsFoldedMm":   { "type": ["array", "null"], "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+            "dimensionsUnfoldedMm": { "type": ["array", "null"], "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+            "wingspanMm":           { "type": ["number", "null"] },
+            "payloadCapacityG":     { "type": ["number", "null"] },
+            "articulation":         { "type": ["string", "null"] }
+          }
+        },
+        "performance": {
+          "type": "object",
+          "properties": {
+            "maxHorizontalSpeedMps": { "type": ["number", "null"] },
+            "cruiseSpeedMps":        { "type": ["number", "null"] },
+            "speedModesMps":         { "type": ["object", "null"], "additionalProperties": { "type": "number" } },
+            "maxAscentSpeedMps":     { "type": ["number", "null"] },
+            "maxDescentSpeedMps":    { "type": ["number", "null"] },
+            "maxTakeoffAltitudeM":   { "type": ["number", "null"] },
+            "maxWindResistanceMps":  { "type": ["number", "null"] },
+            "maxFlightTimeMin":      { "type": ["number", "null"] },
+            "maxFlightDistanceKm":   { "type": ["number", "null"] },
+            "maxTransmissionKm":     { "type": ["number", "null"] }
+          }
+        },
+        "power": {
+          "type": "object",
+          "properties": {
+            "batteryCapacityMah": { "type": ["number", "null"] },
+            "batteryEnergyWh":    { "type": ["number", "string", "null"] },
+            "nominalVoltage":     { "type": ["number", "null"] }
+          }
+        },
+        "sensors": {
+          "type": "object",
+          "properties": {
+            "camera":          { "type": ["string", "null"] },
+            "obstacleSensing": { "type": ["string", "null"] },
+            "gnss":            { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "derived": {
+      "type": "object",
+      "description": "Inferred, not published. Every entry must carry a `basis`.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["value", "basis"],
+        "properties": { "value": {}, "basis": { "type": "string" } }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "description": "What sensors in a consuming environment report for this platform. Maps onto Sentraspere's PROFILE / EMISSN / XPDR cues.",
+      "properties": {
+        "profile":       { "type": "string" },
+        "emission":      { "type": "string" },
+        "transponder":   { "type": "string", "description": "e.g. RID (Remote ID broadcast), NONE, CIVIL, MIL" },
+        "acoustic":      { "type": ["string", "null"] },
+        "visual":        { "type": ["string", "null"] }
+      }
+    },
+    "vulnerability": {
+      "type": "object",
+      "properties": {
+        "hitsToKill": { "type": "object", "additionalProperties": { "type": "integer" }, "description": "per weapon class in the consuming environment" },
+        "notes":      { "type": "string" }
+      }
+    },
+    "rendering": {
+      "type": "object",
+      "properties": {
+        "gltf":       { "type": ["string", "null"], "description": "path to a glTF asset when one exists" },
+        "procedural": { "type": ["string", "null"], "description": "key of a procedural builder the consuming environment provides" },
+        "colour":     { "type": ["string", "null"] },
+        "lights":     { "type": ["string", "null"] }
+      }
+    },
+    "behaviors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "ids of behavior entries in the catalogue this platform can fly"
+    },
+    "training": {
+      "type": "object",
+      "required": ["arenaScale", "bind"],
+      "description": "Binding into a consuming arena. arenaScale compresses real speed into a 60 m training volume; the real values stay in `spec`.",
+      "properties": {
+        "arenaScale":   { "type": "number" },
+        "bind": {
+          "type": "object",
+          "required": ["contactType", "hostile"],
+          "properties": {
+            "contactType": { "type": "string", "description": "Sentraspere TYPES key this asset drives" },
+            "hostile":     { "type": "boolean" },
+            "speedMps":    { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2, "description": "[low, high] in arena m/s — derived from spec speeds × arenaScale" },
+            "altBandM":    { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+            "points":      { "type": "integer" },
+            "hp":          { "type": "integer" }
+          }
+        }
+      }
+    }
+  }
+}
