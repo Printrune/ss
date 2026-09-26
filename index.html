@@ -641,6 +641,7 @@
     padding: 15px 26px;
     cursor: pointer;
   }
+  .vrbtn.dim { opacity: .45; }
   .vrbtn:hover { border-color: var(--ice); color: #EEF3F9; }
   .vrbtn:focus-visible { outline: 2px solid #EEF3F9; outline-offset: 3px; }
   #aar {
@@ -724,7 +725,7 @@
 <div id="stage">
   <a-scene
     embedded
-    xr-mode-ui="XRMode: xr"
+    xr-mode-ui="enabled: false"
     webxr="optionalFeatures: plane-detection, mesh-detection, anchors, local-floor, hand-tracking"
     room-sense
     renderer="antialias: true; colorManagement: true; highRefreshRate: true; foveationLevel: 1; stencil: true"
@@ -763,7 +764,7 @@
       <a-entity id="handL" laser-controls="hand: left"  shooter="weapon: shotgun">
         <a-entity class="gunmodel" weapon-model="weapon: shotgun"></a-entity>
         <a-entity position="0 0.09 0.02" rotation="-50 0 0"
-                  canvas-label="value: 12m; label: SHOTGUN; worldW: 0.1; tone: amber"></a-entity>
+                  canvas-label="value: 30m; label: SHOTGUN; worldW: 0.1; tone: amber"></a-entity>
       </a-entity>
       <a-entity id="handR" laser-controls="hand: right" shooter="weapon: rocket">
         <a-entity class="gunmodel" weapon-model="weapon: rocket"></a-entity>
@@ -798,7 +799,7 @@
       <div id="toast"></div>
     </div>
     <div id="guns">
-      <button class="gun on" id="gunSg" type="button"><span class="key">1</span> Shotgun <span class="rng" id="sgRange">12 m</span></button>
+      <button class="gun on" id="gunSg" type="button"><span class="key">1</span> Shotgun <span class="rng" id="sgRange">30 m</span></button>
       <button class="gun rk" id="gunRk" type="button"><span class="key">2</span> Rocket</button>
       <button class="gun ps" id="gunPs" type="button"><span class="key">3</span> Pistol <span class="inf">&infin;</span></button>
     </div>
@@ -835,6 +836,7 @@
 
     <button class="go" id="start"><span class="tick">&#9654;</span> Arm the range</button>
     <button class="vrbtn" id="govr" type="button">Enter VR</button>
+    <button class="vrbtn" id="goar" type="button">Enter AR</button>
     <p id="vrmsg"></p>
 
     <div id="belt2" class="belt">
@@ -1126,53 +1128,71 @@
     }
   }
 
-  vrBtn.addEventListener('click', function () {
+  /* One handler for both doors. AR is enterAR(): passthrough on a Quest,
+     with the room's doors and windows as the way in. Either way the range
+     arms itself the moment a real session is up. */
+  function goImmersive(ar) {
     var sc = document.querySelector('a-scene');
+    var word = ar ? 'AR' : 'VR';
     if (!sc || !sc.enterVR) {
-      vrSay('Engine not ready yet — wait a moment and try again.', true);
+      vrSay('Engine not ready yet \u2014 wait a moment and try again.', true);
       return;
     }
     if (!navigator.xr) {
-      vrSay('This browser has no WebXR at all. Use Chrome or Edge on the PC with Quest Link running.', true);
+      vrSay('This browser has no WebXR at all. Use the Quest browser, or Chrome/Edge on a PC with Quest Link running.', true);
       return;
     }
-    if (vrSupported === false) {
+    if (!ar && vrSupported === false) {
       vrSay('No headset visible to the browser. Start the Meta Quest Link app, put the headset on and reach the Link environment, then press this again.', true);
       probeXR();
       return;
     }
+    if (ar && arSupported === false) {
+      vrSay('This browser cannot start passthrough AR. On a Quest, open the page in the headset\u2019s own browser.', true);
+      return;
+    }
 
-    // Called with the click's activation still live — no awaits above this.
+    // Called with the click's activation still live -- no awaits above this.
     window.__enteringVR = true;
-    vrSay('Starting VR…');
+    vrSay('Starting ' + word + '\u2026');
     var p;
-    try { p = sc.enterVR(); } catch (err) {
+    try { p = ar ? sc.enterAR() : sc.enterVR(); } catch (err) {
       window.__enteringVR = false;
-      vrSay('VR refused to start: ' + (err && err.message ? err.message : err), true);
+      vrSay(word + ' refused to start: ' + (err && err.message ? err.message : err), true);
       return;
     }
 
     Promise.resolve(p).then(function () {
-      // A real immersive session, or just fullscreen?
       if (sc.xrSession) {
         vrSay('');
         window.__enteringVR = false;
-        btn.click();                      // arm the range now that VR is live
+        btn.click();                      // arm the range now that the session is live
         return;
       }
       try { sc.exitVR(); } catch (e) {}
       window.__enteringVR = false;
-      vrSay('That only went fullscreen — the browser gave no headset session. ' +
-            'Quest Link is not running, or its OpenXR runtime is not active. ' +
-            'Open Meta Quest Link, Settings, General, and set it as the active OpenXR runtime.', true);
+      vrSay(ar
+        ? 'That only went fullscreen \u2014 the browser gave no passthrough session. Open this page in the Quest browser itself.'
+        : 'That only went fullscreen \u2014 the browser gave no headset session. Quest Link is not running, or its OpenXR runtime is not active. Open Meta Quest Link, Settings, General, and set it as the active OpenXR runtime.', true);
       probeXR();
     }).catch(function (err) {
       window.__enteringVR = false;
       var m = (err && err.message) ? err.message : String(err);
-      vrSay('VR refused to start: ' + m, true);
+      vrSay(word + ' refused to start: ' + m, true);
       probeXR();
     });
-  });
+  }
+
+  var arSupported = null;
+  if (navigator.xr && navigator.xr.isSessionSupported) {
+    navigator.xr.isSessionSupported('immersive-ar')
+      .then(function (ok) { arSupported = ok; if (!ok && arBtn) { arBtn.classList.add('dim'); } })
+      ['catch'](function () { arSupported = false; });
+  }
+
+  vrBtn.addEventListener('click', function () { goImmersive(false); });
+  var arBtn = document.getElementById('goar');
+  if (arBtn) { arBtn.addEventListener('click', function () { goImmersive(true); }); }
 
   window.addEventListener('load', function () {
     setTimeout(function () {
@@ -1890,6 +1910,7 @@
         c.hostile = false;
         c.frozen = true;            // the feed moves it, not the game's autopilot
         if (self.el.sceneEl.is('ar-mode')) { c.outdoor = true; c.setMasked(true); }
+        self.hush(c, a);
         self.fit(el, a);
       }, 0);
       return el;
@@ -1930,7 +1951,21 @@
     aim: function (e, a) {
       e.__want = this.place(a);
       var c = e.components && e.components.target;
-      if (c) { c.live = a; this.fit(e, a); }
+      if (c) { c.live = a; this.fit(e, a); this.hush(c, a); }
+    },
+
+    /* A real aircraft is real distance away. Past a kilometre you would not
+       hear it, so it makes no sound here either -- which is nearly all of
+       them. Inside a kilometre it gets its engine back. */
+    hush: function (c, a) {
+      var metres = (a.dst || 0) * 1852;
+      if (metres > 1000) {
+        if (c.engine) { c.engine.stop(); c.engine = null; }
+        c.silent = true;
+      } else if (c.silent) {
+        c.silent = false;
+        c.engine = S3.engine(c.data.type);
+      }
     },
 
     /* Five seconds between fixes would read as teleporting, so slide. */
@@ -2374,7 +2409,7 @@
     init: function () {
       var g = new THREE.Group();
       [[2, 0x2A4A66, 0.30], [6, 0x2A4A66, 0.24],
-       [12, AMBER, 0.55], [20, 0x2A4A66, 0.16]].forEach(function (spec) {
+       [12, 0x2A4A66, 0.20], [30, AMBER, 0.55], [60, 0x2A4A66, 0.14]].forEach(function (spec) {
         var m = new THREE.Mesh(
           new THREE.RingGeometry(spec[0] - 0.035, spec[0] + 0.035, 96),
           new THREE.MeshBasicMaterial({ color: spec[1], transparent: true,
@@ -2672,7 +2707,7 @@
       ring.position.z = 16.02;            // the deck, not the water (this entity is rotated flat,
                                          // so its local z is world height)
       // 12 m is the shotgun's reach, so it gets the bright marking
-      [[6, 0x2A4A66, 0.20], [12, AMBER, 0.50], [20, 0x2A4A66, 0.22], [30, 0x2A4A66, 0.15]]
+      [[10, 0x2A4A66, 0.20], [20, 0x2A4A66, 0.22], [30, AMBER, 0.50], [60, 0x2A4A66, 0.15]]
         .forEach(function (spec) {
           var m = new THREE.Mesh(
             new THREE.RingGeometry(spec[0] - 0.07, spec[0] + 0.07, 80),
@@ -5591,7 +5626,11 @@
       var hasScreen = (ROOM.doors.length + ROOM.windows.length + ROOM.breaches.length) > 0 || aperturesAreFallback();
       var show = !h || hasScreen;
       if (this.built && this.built.group) { this.built.group.visible = show; }
-      if (this.hud) { this.hud.visible = show; }
+      /* The bracket and the range are the scope's picture, and the scope
+         sees through walls: they stay up wherever the contact is. Only the
+         airframe itself is confined to the openings. */
+      if (this.hud) { this.hud.visible = true; }
+      this.throughWall = !!h;
       this.setMasked(!!h && hasScreen);
     },
     setMasked: function (on) {
@@ -5608,7 +5647,6 @@
         }
       };
       if (this.built && this.built.group) { this.built.group.traverse(apply); }
-      if (this.hud) { this.hud.traverse(apply); }
     },
     onShot: function () {
       // desktop mouse path; shift-click sends a rocket instead
@@ -5790,9 +5828,10 @@
 
         this.track = trackQuality(dist, this);
         // each readout answers to its own switch
+        var behindWall = !!this.throughWall || (!!this.outdoor && this.el.sceneEl.is('ar-mode'));
         this.iff.visible = !!VIEW.on.ring;
         this.dist.visible = !!VIEW.on.range;
-        var panelOn = VIEW.on.speed || VIEW.on.size || VIEW.on.xpdr;
+        var panelOn = (VIEW.on.speed || VIEW.on.size || VIEW.on.xpdr) && !behindWall;
         this.evid.visible = !!panelOn;
         drawIff(this.iff, this, dist, this.track);
         this.iff.scale.set(ringSz, ringSz, 1);
@@ -5847,13 +5886,13 @@
         drawAI(this.aiTag, this.ai, this.delegated);
         this.aiTag.scale.set(uiSz * 1.45, uiSz * 0.656, 1);
         this.aiTag.position.set(anchor + uiSz * 0.78, uiSz * 0.2, 0);
-        this.aiTag.visible = !!VIEW.on.ai;
+        this.aiTag.visible = !!VIEW.on.ai && !behindWall;
         this.aiTag.material.opacity = this.ai ? 0.97 : 0;
 
         // the real transponder record, for the aircraft that are real
         if (this.live) {
           if (!this.adsb) { this.adsb = adsbSprite(); this.adsb.renderOrder = 999; this.hud.add(this.adsb); }
-          this.adsb.visible = !!VIEW.on.xpdr;
+          this.adsb.visible = !!VIEW.on.xpdr && !behindWall;
           if (this.adsb.visible) {
             drawAdsb(this.adsb, this.live, this.liveShape || liveShape(this.live));
             this.adsb.scale.set(uiSz * 2.0, uiSz * 0.55, 1);
@@ -5992,7 +6031,7 @@
           label: this.weapon.toUpperCase(),
           tone:  this.weapon === 'rocket' ? 'ice' : 'amber',
           value: this.weapon === 'rocket' ? String(game ? game.rockets : 6)
-               : this.weapon === 'pistol' ? '\u221E' : '12m'
+               : this.weapon === 'pistol' ? '\u221E' : SHOTGUN_RANGE + 'm'
         });
       }
     },
@@ -6036,7 +6075,7 @@
   var ROCKET_SPARES = 3;      // on top of one per contact only a rocket can kill
   var LIVES = 10;             // and only a hostile reaching you takes one
   var LAST_LEVEL = 5;         // the run is five levels, then it is over
-  var SHOTGUN_RANGE = 12;
+  var SHOTGUN_RANGE = 30;
   var SHOTGUN_DEG = 9;
   var BLAST_RADIUS = 5;
 
@@ -6486,7 +6525,7 @@
 
       if (!hit) {
         sfx.miss();
-        this.penalise(-2, 'Miss', 0.5);
+        this.say('Miss');
         return;
       }
       var res = hit.c.damage(1, hit.point);
@@ -6557,7 +6596,7 @@
 
       if (!hits.length) {
         sfx.miss();
-        this.penalise(-4, 'Miss — round wasted', 0.62);
+        this.say('Miss');
         return;
       }
       for (var j = 0; j < hits.length; j++) { this.destroy(hits[j], 'shotgun'); }
@@ -6627,7 +6666,7 @@
         }
       }
       if (!killed) {
-        this.penalise(-6, 'Rocket wasted', 0.7);
+        this.say('Rocket wasted');
       }
     },
 
@@ -6809,7 +6848,7 @@
 
       var lbl = document.getElementById('sgRange');
       if (lbl) {
-        var txt = (r < SHOTGUN_RANGE - 0.3 ? Math.round(r) + ' m' : '12 m');
+        var txt = (r < SHOTGUN_RANGE - 0.3 ? Math.round(r) + ' m' : SHOTGUN_RANGE + ' m');
         if (lbl.textContent !== txt) { lbl.textContent = txt; }
         lbl.classList.toggle('tight', r < SHOTGUN_RANGE - 0.3);
       }
@@ -7717,14 +7756,16 @@
     spawnInterval: function () {
       /* With the sea gone there is half as much to shoot, so the sky has to
          work harder. Level one still opens gently. */
-      if (this.wave <= 1) { return Math.max(1900, 3200 - this.waveTime * 30); }
-      var base = Math.max(620, 1700 - (this.wave - 2) * 230);
-      return Math.max(420, base - this.waveTime * 8);
+      /* Dead air between contacts was the complaint, so: shorter gaps, and
+         when nothing hostile is left in the air the next one comes at once. */
+      if (this.wave <= 1) { return Math.max(900, 1600 - this.waveTime * 20); }
+      var base = Math.max(450, 1100 - (this.wave - 2) * 150);
+      return Math.max(320, base - this.waveTime * 8);
     },
 
     liveCap: function () {
-      if (this.wave <= 1) { return 4; }
-      return Math.min(16, 4 + (this.wave - 1) * 3);
+      if (this.wave <= 1) { return 6; }
+      return Math.min(18, 6 + (this.wave - 1) * 3);
     },
 
     /* A wave is a budget, not an open tap: so many swarms and so many single
@@ -7732,7 +7773,7 @@
        which is the whole point. Shooting well buys you time. */
     swarmCount:  function () { return Math.ceil(this.wave / 2); },
     swarmSize:   function () { return Math.min(8, 3 + this.wave); },
-    trickleCount: function () { return Math.round(5 + (this.wave - 1) * 2.5); },
+    trickleCount: function () { return Math.round(8 + (this.wave - 1) * 3); },
     HARD_CAP: 26,
 
     /* Space the wave's swarms across the minute, tightening as waves climb,
@@ -7779,6 +7820,14 @@
         if (c.alive && c.hostile) { return false; }
       }
       return true;
+    },
+
+    anyHostileUp: function () {
+      for (var i = 0; i < this.live.length; i++) {
+        var c = this.live[i].components.target;
+        if (c && c.alive && c.hostile) { return true; }
+      }
+      return false;
     },
 
     speedScale: function () { return 1 + Math.min(0.48, (this.wave - 1) * 0.12); },
@@ -8186,6 +8235,8 @@
       this.stepArrow();
 
       this.sinceSpawn += dt;
+      // sky empty of threats but the wave still owes some: send now
+      if (this.queue && this.queue.length && !this.anyHostileUp()) { this.sinceSpawn = 1e9; }
       if (this.sinceSpawn >= this.spawnInterval()) {
         this.sinceSpawn = 0;
         this.spawn();
