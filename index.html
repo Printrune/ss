@@ -1769,10 +1769,10 @@
     if (c === 'A7')  { return { model: 'drone',    span: 14, what: 'ROTORCRAFT' }; }
     if (c === 'B6')  { return { model: 'drone',    span: 3,  what: 'UAV' }; }
     if (c === 'A1' || c === 'B1' || c === 'B2' || c === 'B4') {
-      return { model: 'bird', span: 11, what: 'LIGHT' };
+      return { model: 'airliner', span: 11, what: 'LIGHT' };     // a real aircraft is never a bird
     }
     if (c === 'A5' || c === 'A4') { return { model: 'airliner', span: 64, what: 'HEAVY' }; }
-    if (c === 'A2')  { return { model: 'bird',     span: 20, what: 'SMALL' }; }
+    if (c === 'A2')  { return { model: 'airliner', span: 20, what: 'SMALL' }; }
     return { model: 'airliner', span: 36, what: 'LARGE' };
   }
 
@@ -7726,8 +7726,14 @@
       this.queue = []; this.trickleLeft = 0;
       for (var i = items.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = items[i]; items[i] = items[j]; items[j] = t; }
       var N = Math.max(1, items.length), span = this.WAVE_SPAN;
+      var birdA = Math.random() * Math.PI * 2, birdN = 0;     // the pair share a bearing
       for (i = 0; i < items.length; i++) {
         var it = items[i], spec = TYPES[it.name];
+        if (it.name === 'bird') {
+          var bslot = 12 + Math.random() * 30, bspeed = rng(spec.speed);
+          this.spawnOne('bird', birdA + (birdN++) * 0.06, 0, { speed: bspeed, dist: Math.min(380, Math.max(60, bspeed * bslot)), pair: true });
+          continue;
+        }
         var slot = 8 + (span - 10) * (i + 0.5) / N + (Math.random() - 0.5) * 6;
         var speed = rng(spec.speed) * this.speedScale();
         var dist = Math.min(380, Math.max(45, speed * slot));
@@ -8852,6 +8858,14 @@
       /* A swarm has to read as one body moving together, so its members fly a
          shared lane with only a little private wander. They still weave — just
          not enough to scatter the formation. */
+      if (opts.pair) {
+        // a bird flies a line, not a search pattern
+        setTimeout(function () {
+          var t = el.components && el.components.target;
+          if (!t) { return; }
+          t.weaveA = 0.15; t.climb = 0; t.bob = 0.04;
+        }, 0);
+      }
       if (opts.tight) {
         // deferred: the component's own init() has not run yet at this point,
         // and it would overwrite anything set here with fresh randoms
