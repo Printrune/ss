@@ -369,8 +369,8 @@
   #hudBtn:hover { border-color: var(--cyan); color: var(--cyan); }
   #hudBtn.off { border-color: rgba(255,176,32,.6); color: var(--amber); }
   #radarbay { margin-top: 18px; }
-  #radarpick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-  #radarpick button {
+  #radarpick, #armpick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  #radarpick button, #armpick button {
     font-family: "Saira", system-ui, sans-serif;
     font-size: 11px; font-weight: 700; letter-spacing: .1em;
     padding: 9px 12px; border-radius: 4px; cursor: pointer;
@@ -378,12 +378,12 @@
     border: 1px solid rgba(120,146,174,.4);
     color: var(--ice); text-align: left;
   }
-  #radarpick button small {
+  #radarpick button, #armpick button small {
     display: block; font-size: 10px; letter-spacing: .06em; font-weight: 400;
     color: rgba(150,172,196,.7); margin-top: 3px;
   }
-  #radarpick button.on { border-color: var(--amber); color: var(--amber); }
-  #radarpick button.on small { color: rgba(255,176,32,.7); }
+  #radarpick button, #armpick button.on { border-color: var(--amber); color: var(--amber); }
+  #radarpick button, #armpick button.on small { color: rgba(255,176,32,.7); }
   .radarnote { margin: 10px 0 0; font-size: 12px; color: rgba(150,172,196,.8); }
   .credit {
     margin: 14px 0 0; font-size: 10px; line-height: 1.55;
@@ -768,7 +768,7 @@
         <a-entity position="0 0.09 0.02" rotation="-50 0 0"
                   canvas-label="value: 50m; label: SHOTGUN; worldW: 0.1; tone: amber"></a-entity>
       </a-entity>
-      <a-entity id="handR" laser-controls="hand: right" shooter="weapon: smash">
+      <a-entity id="handR" laser-controls="hand: right" shooter="weapon: m4">
         <a-entity class="gunmodel" weapon-model="weapon: rocket"></a-entity>
         <a-entity id="rocklabel" position="0 0.09 0.02" rotation="-50 0 0"
                   canvas-label="value: 6; label: ROCKETS; worldW: 0.1; tone: ice"></a-entity>
@@ -851,6 +851,13 @@
       the Copernicus DEM &mdash; &copy; DLR e.V. 2010&ndash;2014 and &copy; Airbus Defence and
       Space GmbH 2014&ndash;2018, provided under COPERNICUS by the European Union and ESA.
       Relief is shown at 1.8&times; vertical for legibility; distances and bearings are true.</p>
+
+    <div id="armbay">
+      <div class="vhead"><span class="vtitle">What you carry</span></div>
+      <p class="vlede">Three weapons. The shotgun, the carbine and the Stinger are the issue; the rest are options &mdash; tick one and drop one. Changes after this happen only between waves.</p>
+      <div id="armpick"></div>
+      <p class="radarnote" id="armnote"></p>
+    </div>
 
     <p class="credit" id="catbay">Contacts: <span id="catnote">loading catalogue&hellip;</span>
       &mdash; UAS are catalogued commercial platforms, manufacturer data with provenance.
@@ -4053,6 +4060,36 @@
     return g;
   }
 
+  /* The SAW: heavier than the carbine, a belt box under the receiver, a
+     bipod folded under the barrel, a long handguard. */
+  function buildMG() {
+    var g = new THREE.Group();
+    var black = pbr(0x1F232A, 0.7, 0.45, 0x0C0E12);
+    var green = pbr(0x4E5A44, 0.2, 0.7, 0x1C2118);
+    var barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.44, 10), black);
+    barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.02, -0.4); g.add(barrel);
+    var guard = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.22), black);
+    guard.position.set(0, 0.01, -0.22); g.add(guard);
+    var recv = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.075, 0.24), black);
+    recv.position.set(0, 0.01, -0.0); g.add(recv);
+    var box = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.08, 0.12), green);
+    box.position.set(0, -0.07, 0.0); g.add(box);
+    var grip = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.09, 0.035), black);
+    grip.position.set(0, -0.05, 0.1); grip.rotation.x = -0.35; g.add(grip);
+    var stock = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 0.2), black);
+    stock.position.set(0, 0.0, 0.22); g.add(stock);
+    var carry = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.03, 0.08), black);
+    carry.position.set(0, 0.065, -0.1); g.add(carry);
+    [-1, 1].forEach(function (sx) {
+      var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.16, 6), black);
+      leg.position.set(sx * 0.02, -0.02, -0.5); leg.rotation.z = sx * 0.3; leg.rotation.x = 0.2; g.add(leg);
+    });
+    var flash = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), new THREE.MeshBasicMaterial({ color: 0xFFD79A, transparent: true, opacity: 0, fog: false }));
+    flash.position.set(0, 0.02, -0.64); g.add(flash);
+    g.userData.flash = flash;
+    return g;
+  }
+
   function buildPistol() {
     var g = new THREE.Group();
     var slide = pbr(0x2A303A, 0.85, 0.3, 0x14171D);
@@ -4119,6 +4156,7 @@
                : this.data.weapon === 'pistol' ? buildPistol()
                : this.data.weapon === 'rifle'  ? buildRifle()
                : this.data.weapon === 'jammer' ? buildJammer()
+               : this.data.weapon === 'mg'     ? buildMG()
                : buildShotgun();
       this.grp.scale.setScalar(this.data.scale);
       this.rest = this.grp.position.clone();
@@ -4237,6 +4275,32 @@
   /* How far out a given sensor returns, for this contact. A real aircraft is
      broadcasting its transponder continuously -- that is what ADS-B is -- so
      the squawk is never range-gated for one. */
+  /* The armory on the start card: the same ARMORY the between-wave setup
+     edits, drawn as pick buttons. */
+  setTimeout(function () {
+    var host = document.getElementById('armpick'), note = document.getElementById('armnote');
+    if (!host) { return; }
+    var paint = function () {
+      host.innerHTML = '';
+      WEAPON_ORDER.forEach(function (k) {
+        var W = WEAPONS[k], b = document.createElement('button');
+        b.type = 'button';
+        b.className = ARMORY.has(k) ? 'on' : '';
+        b.innerHTML = W.name + '<small>' + W.ammo + (W.rounds === Infinity ? '' : W.rounds === null ? ' \u00b7 as issued' : ' \u00b7 ' + W.rounds + ' / wave') + '</small>';
+        b.title = W.real;
+        b.addEventListener('click', function () {
+          if (!ARMORY.toggle(k)) { if (note) { note.textContent = 'You carry ' + ARMORY.max + '. Drop one first.'; } return; }
+          var sc = document.querySelector('a-scene'), g = sc && sc.components && sc.components.game;
+          if (g && g.rearm) { g.rearm(); }
+          paint();
+        });
+        host.appendChild(b);
+      });
+      if (note) { note.textContent = ARMORY.carried.map(function (k) { return WEAPONS[k].name; }).join(' \u00b7 '); }
+    };
+    paint();
+  }, 0);
+
   (function () {
     var b = document.getElementById('adsbBtn');
     if (!b) { return; }
@@ -5669,7 +5733,7 @@
     vtol:     { build: buildVtol,     hostile: false, move: 'cross', speed: [3.0, 4.0],  points: -60, alt: [18, 28],    hp: 4, label: 'Friendly UAS', outdoor: true, friendly: true, rf: true },
     missile:  { build: buildMissile,  hostile: true,  move: 'home',  speed: [4.5, 7.0],  points: 30,  alt: [13, 20],    hp: 1, pistolProof: true, label: 'Cruise missile' },
     jet:      { build: buildJet,      hostile: true,  move: 'cross', speed: [7.0, 10.0], points: 20,  alt: [17, 27],    hp: 4, label: 'Fast jet', outdoor: true },
-    airliner: { build: buildAirliner, hostile: false, move: 'cross', speed: [5.0, 7.0],  points: -60, alt: [26, 36],    hp: 2, label: 'Airliner', outdoor: true },
+    airliner: { build: buildAirliner, hostile: false, move: 'cross', speed: [5.0, 7.0],  points: -60, alt: [26, 36],    hp: 2, label: 'Airliner', outdoor: true, highAlt: true },
     bird:     { build: buildBird,     hostile: false, move: 'cross', speed: [2.6, 4.2],  points: 0,   alt: [13, 21],    hp: 1, label: 'Bird', outdoor: true },
 
     /* On the water. rocketOnly means a hull shrugs off small arms: the
@@ -5685,6 +5749,20 @@
 
   function isRocketOnly(name) { return !!(TYPES[name] && TYPES[name].rocketOnly); }
   function typeLabel(k) { var t = TYPES[k]; return t && t.label ? t.label : k; }
+
+  /* Can this weapon reach that contact at all? A real aircraft is as far
+     away as its transponder says -- tens of kilometres -- and an airliner,
+     real or not, is at altitude; small arms do not get there. The Stinger's
+     envelope is the one exception the game allows. */
+  function inReach(c, W) {
+    if (!c) { return false; }
+    if (c.live) {
+      var metres = (c.live.dst || 0) * 1852;
+      return !!(W && W.kind === 'rocket') ? metres <= 4000 : metres <= (W ? W.range : 0);
+    }
+    if (c.spec && c.spec.highAlt) { return !!(W && W.kind === 'rocket'); }
+    return true;
+  }
 
   /* ================================================== the Verse catalogue
      Contacts are catalogued assets, not code. catalogue/catalogue.json lists
@@ -6280,7 +6358,7 @@
           e.preventDefault();
           var weapon = (e.button === 2 && ARMORY.has('stinger')) ? 'stinger' : game.deskWeapon;
           var W = WEAPONS[weapon] || WEAPONS.m590;
-          if (W.kind === 'smash' || W.kind === 'jam') { game.deskHold = true; return; }
+          if (W.kind === 'smash' || W.kind === 'jam' || W.kind === 'auto') { game.deskHold = true; return; }
           var cool = (W.kind === 'rocket' ? 420 : W.cool) * stressCoolMul();
           var now = performance.now();
           if (now - self.last < cool) { return; }
@@ -6335,7 +6413,7 @@
       // held-trigger weapons: the sight and the jammer work while you hold
       if (this.holding && dt) {
         var W = WEAPONS[this.weapon], gm = this.el.sceneEl.components.game;
-        if (W && (W.kind === 'smash' || W.kind === 'jam') && gm && gm.running && !gm.loOn) {
+        if (W && (W.kind === 'smash' || W.kind === 'jam' || W.kind === 'auto') && gm && gm.running && !gm.loOn) {
           var o = new THREE.Vector3(); this.el.object3D.getWorldPosition(o);
           gm.holdStep(this.weapon, o, this.aimDir, this.el, Math.min(dt, 60) / 1000);
         }
@@ -6389,7 +6467,7 @@
       this.el.setAttribute('raycaster', {
         objects: '.target', far: 120, interval: 60, showLine: true,
         lineColor: W.kind === 'rocket' ? '#DCE6F2' : W.kind === 'jam' ? '#5FD98B'
-                 : W.kind === 'smash' ? '#38B6F0' : W.kind === 'ray' ? '#FFE39A' : '#FFB020',
+                 : W.kind === 'smash' ? '#38B6F0' : (W.kind === 'ray' || W.kind === 'auto') ? '#FFE39A' : '#FFB020',
         lineOpacity: 0.85
       });
       var mdl = this.el.querySelector('.gunmodel');
@@ -6423,7 +6501,7 @@
       if (lg && lg.loOn) { return; }        // the trigger belongs to the panel
 
       var W = WEAPONS[this.weapon] || WEAPONS.m590;
-      if (W.kind === 'smash' || W.kind === 'jam') { return; }   // held, see tick
+      if (W.kind === 'smash' || W.kind === 'jam' || W.kind === 'auto') { return; }   // held, see tick
       var now = performance.now();
       var cool = (W.kind === 'rocket' ? 420 : W.cool) * stressCoolMul();
       if (now - this.last < cool) { return; }
@@ -6501,18 +6579,21 @@
     pitbull: { name: 'MyDefence Pitbull', ammo: 'RF jammer', kind: 'jam', range: 1000, deg: 60, cool: 0, model: 'jammer', rounds: Infinity, jamTime: 2.0,
                real: 'Wearable jammer: 1.6 / 2.4 / 5.2 / 5.8 GHz, 60\u00b0 cone, up to 1,000 m. Cuts the control link and the drone goes down. No effect on a fibre-optic or autonomous drone, or on anything that is not a drone.' },
     stinger: { name: 'FIM-92 Stinger', ammo: 'proximity-fuzed', kind: 'rocket', model: 'rocket', rounds: null,
-               real: 'MANPADS. The only answer to a cruise missile or a jet. Rounds are what the wave issued.' }
+               real: 'MANPADS. The only answer to a cruise missile or a jet. Rounds are what the wave issued.' },
+    m249:    { name: 'M249 SAW', ammo: '5.56 belt', kind: 'auto', range: 150, dmg: 1, cool: 85, model: 'mg', rounds: 200, wobble: 1.2, climb: 0.9,
+               real: 'The squad automatic weapon. Hold the trigger: about 700 rounds a minute, 200 on the belt, and the burst walks off the target the longer you hold it.' }
   };
-  var WEAPON_ORDER = ['m590', 'skynet', 'm4', 'm4dr', 'smash', 'm17', 'pitbull', 'stinger'];
+  var WEAPON_ORDER = ['m590', 'm4', 'stinger', 'm249', 'skynet', 'm4dr', 'smash', 'm17', 'pitbull'];
+  var WEAPON_DEFAULT = ['m590', 'm4', 'stinger'];
 
   var ARMORY = {
-    carried: ['m590', 'smash', 'stinger'],
+    carried: WEAPON_DEFAULT.slice(),
     max: 3,
     spent: {},
     load: function () {
       try {
         var raw = localStorage.getItem('sentraCarry');
-        if (raw) { var arr = JSON.parse(raw); if (arr.length && arr.every(function (k) { return WEAPONS[k]; })) { this.carried = arr.slice(0, this.max); } }
+        if (raw) { var arr = JSON.parse(raw).filter(function (k) { return WEAPON_ORDER.indexOf(k) !== -1; }); if (arr.length) { this.carried = arr.slice(0, this.max); } }
       } catch (e) {}
     },
     save: function () { try { localStorage.setItem('sentraCarry', JSON.stringify(this.carried)); } catch (e) {} },
@@ -6806,7 +6887,7 @@
     deskHoldStep: function (s) {
       if (!this.deskHold || !this.running) { return; }
       var W = WEAPONS[this.deskWeapon];
-      if (!W || (W.kind !== 'smash' && W.kind !== 'jam')) { return; }
+      if (!W || (W.kind !== 'smash' && W.kind !== 'jam' && W.kind !== 'auto')) { return; }
       var cam = this.el.camera; if (!cam) { return; }
       var o = new THREE.Vector3(); cam.getWorldPosition(o);
       var d = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new THREE.Quaternion())).normalize();
@@ -6967,6 +7048,7 @@
         var p = new THREE.Vector3();
         el.object3D.getWorldPosition(p);
         if (this.wallBlocked(origin, p)) { continue; }
+        if (!inReach(c, this._W)) { this._farHit = true; continue; }
         v.copy(p).sub(origin);
         var t = v.dot(dir);                       // distance along the ray
         if (t < 0 || t > maxDist) { continue; }
@@ -7019,14 +7101,16 @@
       this.kickModel(handEl);
 
       dir = jitter(dir, aimWobble() + (W.wobble || 0));
+      this._W = W; this._farHit = false;
       var hit = this.rayPick(origin, dir, W.range);
+      var far = this._farHit; this._W = null;
       this.tracer(origin,
         hit ? hit.point : origin.clone().addScaledVector(dir, W.range),
         0xFFE39A, 0.09);
 
       if (!hit) {
         sfx.miss();
-        this.say('Miss');
+        this.say(far ? 'Out of reach' : 'Miss');
         return;
       }
       var res = hit.c.damage(W.dmg || 1, hit.point);
@@ -7091,6 +7175,21 @@
       this.holds = this.holds || {};
       var H = this.holds[id] || (this.holds[id] = { lock: 0, said: 0, last: 0 });
       var now = performance.now();
+      if (W.kind === 'auto') {
+        /* Automatic fire: a round every cool ms while held, and the burst
+           climbs and spreads the longer the trigger stays down. */
+        if (ARMORY.left(key, this) <= 0) { if (now - H.said > 1200) { H.said = now; sfx.dry(); this.say(W.name + ' \u2014 belt empty'); } return; }
+        H.lock += s;                                    // time on the trigger
+        if (now - H.last < W.cool * stressCoolMul()) { return; }
+        H.last = now;
+        ARMORY.use(key);
+        var spread = (W.wobble || 0) + Math.min(4, H.lock * (W.climb || 0));
+        var up = new THREE.Vector3(0, 1, 0);
+        var aimA = dir.clone().addScaledVector(up, Math.min(0.06, H.lock * 0.012)).normalize();
+        this.firePistol(origin, aimA, handEl, { range: W.range, dmg: W.dmg, wobble: spread, name: W.name });
+        this.paintGuns();
+        return;
+      }
       if (W.kind === 'smash') {
         /* Find what the sight would mark: the contact nearest the aim inside
            its tolerance and range, with a clear line. Hold on it long enough
@@ -7104,7 +7203,7 @@
           if (d > W.range + c.radius) { continue; }
           to.normalize();
           var dot = to.dot(dir) + Math.min(0.02, c.radius / Math.max(d, 1) * 0.5);
-          if (dot >= bestDot && !this.wallBlocked(origin, bp)) { bestDot = dot; best = { el: this.live[i], c: c, p: bp.clone() }; }
+          if (dot >= bestDot && !this.wallBlocked(origin, bp) && inReach(c, W)) { bestDot = dot; best = { el: this.live[i], c: c, p: bp.clone() }; }
         }
         if (!best) {
           H.lock = 0;
@@ -7197,6 +7296,7 @@
         to.normalize();
         if (to.dot(dir) < cos - Math.min(0.02, c.radius / Math.max(d, 1) * 0.1)) { continue; }
         if (this.wallBlocked(origin, p)) { continue; }
+        if (!inReach(c, W)) { continue; }
         if (d < bd) { bd = d; best = { el: this.live[i], c: c }; }
       }
       this.tracer(origin, origin.clone().addScaledVector(dir, Math.min(W.range, bd === Infinity ? W.range : bd)), 0xCFDCE8, 0.12);
@@ -7232,17 +7332,18 @@
         var need = coneCos - Math.min(0.02, c.radius / Math.max(d, 1) * 0.05);
         if (to.dot(dir) >= need) {
           if (this.wallBlocked(origin, el.object3D.getWorldPosition(new THREE.Vector3()))) { this._wallHit = true; continue; }
+          if (!inReach(c, W)) { this._farHit = true; continue; }
           hits.push(el);
         }
       }
 
       if (!hits.length) {
         sfx.miss();
-        this.say(this._wallHit ? 'Wall' : 'Miss');
-        this._wallHit = false;
+        this.say(this._wallHit ? 'Wall' : this._farHit ? 'Out of reach' : 'Miss');
+        this._wallHit = false; this._farHit = false;
         return;
       }
-      this._wallHit = false;
+      this._wallHit = false; this._farHit = false;
       /* A pattern takes the nearest thing in the cone, and only whatever is
          flying within five metres of it -- a tight swarm, not the whole sky. */
       var hp = new THREE.Vector3(), nearest = null, nd = Infinity, hpos = [];
@@ -7319,7 +7420,7 @@
       for (var i = this.live.length - 1; i >= 0; i--) {
         var el = this.live[i];
         var c = el.components.target;
-        if (!c || !c.alive) { continue; }
+        if (!c || !c.alive || !inReach(c, WEAPONS.stinger)) { continue; }
         var p = new THREE.Vector3();
         el.object3D.getWorldPosition(p);
         if (p.distanceTo(pos) <= BLAST_RADIUS + c.radius) {
@@ -7579,20 +7680,30 @@
        the air at once: every contact at its own range and speed, so their
        arrivals are spread across about five minutes. Nothing trickles in
        later; what you see on the scope at the start is the wave. */
-    WAVE_SPAN: 300,
+    WAVE_SPAN: 60,
+    /* The wave table, as set: hostiles by wave, and a small fixed civilian
+       presence beside them so there is still something not to shoot. */
+    WAVES: [
+      { drone: 5,  missile: 1, bird: 2, quad: 1, vtol: 1, airliner: 0 },
+      { drone: 10, missile: 2, bird: 2, quad: 1, vtol: 1, airliner: 1 },
+      { drone: 14, missile: 3, bird: 2, quad: 2, vtol: 1, airliner: 1 },
+      { drone: 18, missile: 4, bird: 2, quad: 2, vtol: 1, airliner: 1 },
+      { drone: 22, missile: 5, bird: 2, quad: 2, vtol: 1, airliner: 1 }
+    ],
     armWave: function () {
       this.swarmsLeft = 0;
       this.sinceSpawn = 0;
       this.mistakes = 0;
       this.queue = [];
-      var missiles = 0, n = this.trickleCount() + this.swarmCount() * this.swarmSize();
-      var armoured = 0;
-      for (var i = 0; i < n; i++) {
-        var name = pickType(this.wave);
-        var salvo = (name === 'missile' || name === 'torpedo') ? salvoSize(this.wave) : 1;
-        if (name === 'missile') { missiles += salvo; }
-        if (isRocketOnly(name) && TYPES[name].hostile) { armoured += salvo; }
-        this.queue.push({ name: name, n: salvo });
+      var missiles = 0, armoured = 0;
+      var tbl = this.WAVES[Math.min(this.wave, this.WAVES.length) - 1];
+      for (var name in tbl) {
+        if (!TYPES[name] || !tbl[name]) { continue; }
+        for (var i = 0; i < tbl[name]; i++) {
+          if (name === 'missile') { missiles++; }
+          if (isRocketOnly(name) && TYPES[name].hostile) { armoured++; }
+          this.queue.push({ name: name, n: 1 });
+        }
       }
       this.trickleLeft = this.queue.length;
       this.waveMissiles = missiles;
@@ -7617,7 +7728,7 @@
       var N = Math.max(1, items.length), span = this.WAVE_SPAN;
       for (i = 0; i < items.length; i++) {
         var it = items[i], spec = TYPES[it.name];
-        var slot = 15 + (span - 30) * (i + 0.5) / N + (Math.random() - 0.5) * 18;
+        var slot = 8 + (span - 10) * (i + 0.5) / N + (Math.random() - 0.5) * 6;
         var speed = rng(spec.speed) * this.speedScale();
         var dist = Math.min(380, Math.max(45, speed * slot));
         speed = dist / slot;                                  // arrive when dealt
@@ -8976,7 +9087,7 @@
         var hit = null;
         for (var j = 0; j < this.live.length; j++) {
           var c = this.live[j].components.target;
-          if (!c || !c.alive) { continue; }
+          if (!c || !c.alive || !inReach(c, WEAPONS.stinger)) { continue; }
           var p = new THREE.Vector3();
           this.live[j].object3D.getWorldPosition(p);
           if (p.distanceTo(r.obj.position) <= 2.2 + c.radius) { hit = p; break; }
